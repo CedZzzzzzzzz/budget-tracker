@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Budget Tracker</title>
+    <link rel="setup-icon" type="images/png" href="/images/favicon/fav.png">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="header-left">
+                <div>
+                    <h1>Budget Tracker</h1>
+                    <p class="header-subtitle">Master your finances with style</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button id="themeToggle" class="btn-theme" onclick="toggleTheme()">☀️ Light</button>
+                <button id="exportBtn" class="btn-export hidden" onclick="exportWeeklyPDF()">📄 Export PDF</button>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="nav-tabs">
+            <button class="nav-tab active" data-tab="weekly">📅 Weekly Budget</button>
+            <button class="nav-tab" data-tab="monthly">📊 Monthly Summary</button>
+        </div>
+
+        <!-- Weekly Tab -->
+        <div id="weeklyTab" class="tab-content active">
+            <div id="setupScreen" class="screen active">
+                <div class="setup-card">
+                    <div class="setup-icon">💵</div>
+                    <h2>Start Your Week</h2>
+                    <p id="weekRange" class="setup-subtitle"></p>
+                    <p class="setup-note">Week starts on Sunday</p>
+                    <div class="input-group">
+                        <label for="allowanceInput">Weekly Allowance (₱)</label>
+                        <input type="number" id="allowanceInput" placeholder="e.g., 1000" min="0" step="0.01">
+                        <button id="startBtn" class="btn btn-primary">Start Tracking →</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="trackerScreen" class="screen">
+                <!-- Week Banner -->
+                <div class="week-banner">
+                    <div class="week-banner-content">
+                        <div class="week-info">
+                            <span class="week-label">Current Week</span>
+                            <span id="weekDates" class="week-dates"></span>
+                        </div>
+                        <div class="week-countdown">
+                            <span class="countdown-label">Days Left</span>
+                            <span id="daysRemaining" class="countdown-value">0</span>
+                        </div>
+                        <div class="current-day">
+                            <span class="current-day-label">Today</span>
+                            <span id="currentDay" class="current-day-value"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tracker-grid">
+                    <!-- Stats Sidebar -->
+                    <div class="sidebar">
+                        <div class="card">
+                            <h3 class="card-title-small">💳 Overview</h3>
+                            <div class="stat-main">
+                                <p class="stat-label">Allowance</p>
+                                <p class="stat-value-large" id="allowanceDisplay">₱0.00</p>
+                            </div>
+                            <div class="stats-list">
+                                <div class="stat-item spent"><p class="stat-label">Spent</p><p class="stat-value" id="spentAmount">₱0.00</p></div>
+                                <div class="stat-item remaining"><p class="stat-label">Remaining</p><p class="stat-value" id="remainingAmount">₱0.00</p></div>
+                                <div class="stat-item days"><p class="stat-label">Days Logged</p><p class="stat-value" id="daysLogged">0/7</p></div>
+                            </div>
+                            <div class="progress-section">
+                                <div class="progress-info"><span>Progress</span><span id="percentUsed">0%</span></div>
+                                <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+                            </div>
+                            <div id="warningMessage" class="warning-box hidden"><p>⚠️ Over budget!</p></div>
+                        </div>
+                    </div>
+
+                    <!-- Main Content -->
+                    <div class="main-content">
+                        <div class="card">
+                            <h3 class="card-title">➕ Add Daily Expenses</h3>
+                            <p class="input-label">Select Day</p>
+                            <div class="day-buttons" id="dayButtons">
+                                <button class="day-btn" data-day="Sunday">Sun</button>
+                                <button class="day-btn" data-day="Monday">Mon</button>
+                                <button class="day-btn" data-day="Tuesday">Tue</button>
+                                <button class="day-btn" data-day="Wednesday">Wed</button>
+                                <button class="day-btn" data-day="Thursday">Thu</button>
+                                <button class="day-btn" data-day="Friday">Fri</button>
+                                <button class="day-btn" data-day="Saturday">Sat</button>
+                            </div>
+                            <div id="expenseInputs" class="expense-inputs hidden">
+                                <p class="selected-day-text">Adding for <span id="selectedDayText"></span></p>
+                                <div class="expense-grid">
+                                    <div class="input-group"><label>🚗 Fare</label><input type="number" id="fareInput" placeholder="0" min="0" step="0.01"></div>
+                                    <div class="input-group"><label>🍔 Food</label><input type="number" id="foodInput" placeholder="0" min="0" step="0.01"></div>
+                                    <div class="input-group"><label>🛍️ Other</label><input type="number" id="otherInput" placeholder="0" min="0" step="0.01"></div>
+                                </div>
+                                <button id="addExpenseBtn" class="btn btn-primary">Add ✓</button>
+                            </div>
+                        </div>
+
+                        <div id="summaryCard" class="card hidden">
+                            <h3 class="card-title">📋 Weekly Summary</h3>
+                            <div id="expenseList" class="expense-list"></div>
+                            <div class="summary-totals">
+                                <div class="total-row"><span>Total Fare:</span><span id="totalFare">₱0.00</span></div>
+                                <div class="total-row"><span>Total Food:</span><span id="totalFood">₱0.00</span></div>
+                                <div class="total-row"><span>Total Other:</span><span id="totalOther">₱0.00</span></div>
+                                <div class="total-row grand"><span>Total:</span><span id="grandTotal">₱0.00</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Monthly Tab -->
+        <div id="monthlyTab" class="tab-content">
+            <div class="card">
+                <div class="monthly-header">
+                    <h2>Monthly Summary</h2>
+                    <div class="monthly-actions">
+                        <div class="month-selector">
+                            <button id="prevMonth" class="month-nav-btn">◀</button>
+                            <span id="currentMonth" class="current-month"></span>
+                            <button id="nextMonth" class="month-nav-btn">▶</button>
+                        </div>
+                        <button class="btn-export" onclick="exportMonthlyPDF()">📄 PDF</button>
+                    </div>
+                </div>
+
+                <div class="monthly-stats">
+                    <div class="monthly-stat-card blue"><p class="monthly-stat-label">Total Allowance</p><p class="monthly-stat-value" id="monthlyAllowance">₱0.00</p></div>
+                    <div class="monthly-stat-card orange"><p class="monthly-stat-label">Total Spent</p><p class="monthly-stat-value" id="monthlySpent">₱0.00</p></div>
+                    <div class="monthly-stat-card green"><p class="monthly-stat-label">Total Saved</p><p class="monthly-stat-value" id="monthlySaved">₱0.00</p></div>
+                </div>
+
+                <div class="monthly-content">
+                    <div class="breakdown-section">
+                        <h3>Expense Breakdown</h3>
+                        <div class="breakdown-list">
+                            <div class="breakdown-item"><span>🚗 Fare</span><span id="monthlyFare">₱0.00</span></div>
+                            <div class="breakdown-item"><span>🍔 Food</span><span id="monthlyFood">₱0.00</span></div>
+                            <div class="breakdown-item"><span>🛍️ Other</span><span id="monthlyOther">₱0.00</span></div>
+                        </div>
+                    </div>
+                    <div class="weekly-section">
+                        <h3>Weekly Breakdown</h3>
+                        <div id="weeklyList" class="weekly-list"></div>
+                    </div>
+                </div>
+                <div id="noMonthlyData" class="no-data hidden"><p>No data for this month.</p></div>
+            </div>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
