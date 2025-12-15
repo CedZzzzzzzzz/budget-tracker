@@ -8,14 +8,39 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from functools import wraps
 
 api = Blueprint("api", __name__, url_prefix = "/api")
 
+#Password validation
+def validate_password(password):
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long"
+    if not any(char.isupper() for char in password):
+        return False, "Password must contain at least one uppercase letter"
+    if not any(char.isdigit() for char in password):
+        return False, "Password must contain at least one digit"
+    
+    special_chars = "!@#$%^&*(),.?\":{}|<>"
+    if not any(char in special_chars for char in password):
+        return False, "Password must contain at least one special character"
+    
+    return True, "Valid password"
+    
+
+#Authentication
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if "user_id" not in session:
+            return jsonify({"error" : "Authentication required"}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
 def get_user_id():
-    if "user_id" not in session:
-        session["user_id"] = os.urandom(16).hex()
     return session["user_id"]
 
+#Helper Functions
 def get_week_range():
     today = datetime.now().date()
     days_since_sunday = (today.weekday() + 1) % 7
@@ -27,7 +52,77 @@ def get_current_day():
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     return days[datetime.now().weekday()]
 
+#Authenticated Routes
+@api.route("/register", methods = ["POST"])
+def register():
+    try:
+        data = request.getjson()
+        username = data.get("username", "").strip()
+        email = data.get("email", "").strip()
+        password = data.get("password", "").strip()
+
+        if not username or len(username) < 8:
+            return jsonify({"error" : "Username must be at least 8 characters long."}), 400
+        if not email or "@" not in email:
+            return jsonify({"error" : "Inavlid email address."}), 400
+        
+        #Password verification
+        is_valid, message = validate_password(password)
+        if not is_valid:
+            return jsonify({"error" : message}), 400
+        
+        #Check if username or email already exists
+        if db.get_user_by_username(username):
+            return jsonify({"error" : "Username already exists"}), 400
+        if db.get_user_by_email(email):
+            return jsonify({"error" : "An account is already registed with this email"}), 400
+        
+        #Create user
+        user_id = db.create_user(username, email, password)
+        if user_id:
+            session ["user_id"] = user_id
+            session ["username"] = username
+            return jsonify({"succes" : True, "username" : username})
+        return jsonify({"error" : "Registration failed"}), 500
+    
+    except Exception as e:
+        return jsonify({"error" : str(e)}), 500
+@api.route("/login", methods = ["POST"])
+def login():
+    try:
+        data = request.get_json()
+        username = data.get("username", "").strip()
+        password = data.get("password", "")
+
+        if not username or not password:
+            return jsonify({"error" : "Username and password are required"}), 400
+        
+        #Get user from database
+        user = db.get_user_by_username(username)
+        if not user:
+            return jsonify({"error" : "Invalid username"}), 401
+        #Password verification
+        if not db.verify_password(user["id"], password):
+            return jsonify({"error" : "Invalid password"}), 401
+        
+        #Set session
+        session ["user_id"] = user["id"]
+        session["username"] = user["username"]
+
+        return jsonify({"success" : True, "username" : user["username"]})
+    
+    except Exception as e:
+        return jsonify({"error" : str(e)}),500
+@api.route("/logout", methods = ["GET"])
+def check_auth():
+    if "user_id" in session:
+        return jsonify({"authenticated" : True, "username" : session.get("username")})
+    return jsonify({"authenticated" : False})
+
+
+#Budget routes
 @api.route("/current-week-info", methods = ["GET"])
+@login_required
 def current_week_info():
     week_start, week_end = get_week_range()
     today = datetime.now().date()
@@ -42,6 +137,7 @@ def current_week_info():
     })
 
 @api.route("/set-allowance", methods = ["POST"])
+@login_required
 def set_allowance():
     try:
         data = request.get_json()
@@ -65,6 +161,7 @@ def set_allowance():
         return jsonify({"error" : str(e)}, 500)
     
 @api.route("/add-expense", methods = ["POST"])
+@login_required
 def add_expense():
     try:
         data = request.get_json()
@@ -91,6 +188,7 @@ def add_expense():
         return jsonify({"error" : str(e)}), 500
     
 @api.route("/delete-expense/<day>", methods = ["DELETE"])
+@login_required
 def delete_expense(day):
     try:
         user_id = get_user_id()
@@ -106,6 +204,7 @@ def delete_expense(day):
         return jsonify({"error" : str(e)}), 500
     
 @api.route("/get-budget", methods = ["GET"])
+@login_required
 def get_budget():
     try:
         user_id = get_user_id()
@@ -141,6 +240,7 @@ def get_budget():
         return jsonify({"error" : str(e)}), 500
     
 @api.route("/monthly-summary", methods = ["GET"])
+@login_required
 def monthly_summary():
     try:
         user_id = get_user_id()
@@ -170,7 +270,9 @@ def monthly_summary():
     except Exception as e:
         return jsonify({"error" : str(e)}), 500
 
+#PDF Export Routes
 @api.route("/export-pdf", methods = ["GET"])
+@login_required
 def export_pdf():
     try:
         user_id = get_user_id()
@@ -220,6 +322,7 @@ def export_pdf():
         return jsonify({"error" : str(e)}, 500)
     
 @api.route('/export-monthly-pdf', methods=['GET'])
+@login_required
 def export_monthly_pdf():
     try:
         user_id = get_user_id()
