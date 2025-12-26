@@ -87,12 +87,13 @@ def get_user_by_email(email):
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute("SLECT * FROM users WHERE email = ?", (email, ))
+    cursor.execute("SELECT * FROM users WHERE email = ?", (email, ))
     user = cursor.fetchone()
     conn.close()
     return dict(user) if user else None
 def verify_password(user, password):
     return check_password_hash(user ["password_hash"], password)
+
 #Budget Functions -----
 def create_budget(user_id, week_start, week_end, allowance):
     conn = sqlite3.connect(DB_NAME)

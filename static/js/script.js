@@ -1,3 +1,60 @@
+async function checkAuth() {
+    try {
+        const res = await fetch('/api/check-auth');
+        const data = await res.json();
+        
+        if (!data.authenticated) {
+            // Not logged in, redirect to login page
+            window.location.href = '/';
+            return false;
+        }
+        
+        // Update user greeting
+        const username = data.username;
+        document.getElementById('userGreeting').textContent = `👋 Hi, ${username}!`;
+        return true;
+    } catch (e) {
+        console.error('Auth check failed:', e);
+        window.location.href = '/';
+        return false;
+    }
+}
+
+// Logout function
+async function handleLogout() {
+    try {
+        const res = await fetch('/api/logout', { method: 'POST' });
+        if (res.ok) {
+            window.location.href = '/';
+        }
+    } catch (e) {
+        console.error('Logout failed:', e);
+    }
+}
+
+// --- SAFE EVENT LISTENERS ---
+const attachListener = (id, event, fn) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(event, fn);
+};
+
+attachListener('logoutBtn', 'click', handleLogout);
+attachListener('exportBtn', 'click', () => {
+    window.location.href = '/api/export-pdf';
+});
+attachListener('exportMonthlyBtn', 'click', () => {
+    window.location.href = `/api/export-monthly-pdf?month=${currentMonth}&year=${currentYear}`;
+});
+attachListener('startBtn', 'click', startTracking);
+attachListener('addExpenseBtn', 'click', addExpense);
+
+const allowanceInputEl = document.getElementById('allowanceInput');
+if (allowanceInputEl) {
+    allowanceInputEl.addEventListener('keypress', (e) => { 
+        if (e.key === 'Enter') startTracking(); 
+    });
+}
+
 // State
 let allowance = 0, expenses = {}, selectedDay = '', weekInfo = null;
 let currentMonth = new Date().getMonth() + 1, currentYear = new Date().getFullYear();
@@ -189,11 +246,11 @@ function updateDisplay(totals = null) {
 // Render Expense List
 function renderExpenseList() {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const today = new Date().getDay(); // 0 = Sunday, 1 = Monday, etc.
+    const today = new Date().getDay(); 
     
     // Check if we have any expenses to show or any days have passed
     const hasAnyExpenses = Object.keys(expenses).length > 0;
-    const hasPastDays = today > 0; // Have any days passed this week?
+    const hasPastDays = today > 0; 
     
     if (!hasAnyExpenses && !hasPastDays) {
         summaryCard.classList.add('hidden');
@@ -206,7 +263,7 @@ function renderExpenseList() {
     days.forEach((day, index) => {
         const e = expenses[day];
         const hasExpense = !!e;
-        const isPast = index < today; // Day has already passed
+        const isPast = index < today; 
         const isToday = index === today;
         const isFuture = index > today;
         
@@ -233,7 +290,6 @@ function renderExpenseList() {
                 </div>
             `;
         } else {
-            // Past day without expenses (not today)
             item.classList.add('no-expense-day');
             item.innerHTML = `
                 <span class="expense-item-day">${day}</span>
@@ -244,9 +300,8 @@ function renderExpenseList() {
     });
 }
 
-// Add this new function after the existing functions
 function updateDayButtons() {
-    const today = new Date().getDay(); // 0 = Sunday, 1 = Monday, etc.
+    const today = new Date().getDay(); 
     
     dayButtons.forEach(btn => {
         const dayIndex = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].indexOf(btn.dataset.day);

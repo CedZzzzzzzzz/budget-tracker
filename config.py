@@ -7,7 +7,7 @@ class Config:
     SESSION_COOKIE_SECURE = False
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
-    PERMANENT_SESSION_LIFETIME = timedelta(days=30)
+    PERMANENT_SESSION_LIFETIME = 86400
     DEBUG = True
 
 class ProductionConfig(Config):
@@ -17,9 +17,15 @@ class ProductionConfig(Config):
 
 class DevelopmentConfig(Config):
     DEBUG = True
+    SESSION_COOKIE_SECURE = False
+
+class TestingConfig(Config):
+    TESTING = True
+    DEBUG = True
 
 config = {
     "development" : DevelopmentConfig,
     "production" : ProductionConfig,
-    "default" : DevelopmentConfig
+    "testing" : TestingConfig,
+    "default" : DevelopmentConfig,
 }

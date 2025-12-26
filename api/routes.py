@@ -38,7 +38,7 @@ def login_required(f):
     return decorated_function
 
 def get_user_id():
-    return session["user_id"]
+    return session.get("user_id")
 
 #Helper Functions
 def get_week_range():
@@ -56,7 +56,7 @@ def get_current_day():
 @api.route("/register", methods = ["POST"])
 def register():
     try:
-        data = request.getjson()
+        data = request.get_json()
         username = data.get("username", "").strip()
         email = data.get("email", "").strip()
         password = data.get("password", "").strip()
@@ -82,7 +82,7 @@ def register():
         if user_id:
             session ["user_id"] = user_id
             session ["username"] = username
-            return jsonify({"succes" : True, "username" : username})
+            return jsonify({"success" : True, "username" : username})
         return jsonify({"error" : "Registration failed"}), 500
     
     except Exception as e:
@@ -102,7 +102,7 @@ def login():
         if not user:
             return jsonify({"error" : "Invalid username"}), 401
         #Password verification
-        if not db.verify_password(user["id"], password):
+        if not db.verify_password(user, password):
             return jsonify({"error" : "Invalid password"}), 401
         
         #Set session
@@ -113,6 +113,12 @@ def login():
     
     except Exception as e:
         return jsonify({"error" : str(e)}),500
+    
+@api.route("/logout", methods = ["POST"])
+def logout():
+    session.clear()
+    return jsonify({"success" : True})
+
 @api.route("/logout", methods = ["GET"])
 def check_auth():
     if "user_id" in session:

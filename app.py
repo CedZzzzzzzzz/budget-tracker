@@ -1,4 +1,4 @@
-from flask import Flask, render_template
+from flask import Flask, render_template, session, redirect, url_for
 from flask_cors import CORS
 import os
 from config import config
@@ -8,16 +8,28 @@ from api.routes import api, get_week_range
 def create_app(config_name = "default"):
     app = Flask(__name__)
     app.config.from_object(config[config_name])
+
+    app.secret_key = os.environ.get('SECRET_KEY', os.urandom(32))
+
     CORS(app)
 
     app.register_blueprint(api)
 
     with app.app_context():
         db.init_db()
+
     #path route of the application
     @app.route("/")
     def index():
-        return render_template("index.html")
+        if 'user_id' in session:
+            return redirect(url_for('dashboard'))
+        return render_template("login.html")
+    
+    @app.route("/dashboard")
+    def dashboard():
+        if 'user_id' not in session:
+            return redirect(url_for('login'))
+        return render_template("dashboard.html")
 
     @app.route("/health")
     def health():
