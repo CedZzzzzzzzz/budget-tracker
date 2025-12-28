@@ -1,65 +1,3 @@
-async function checkAuth() {
-    try {
-        const res = await fetch('/api/check-auth');
-        const data = await res.json();
-        
-        if (!data.authenticated) {
-            // Not logged in, redirect to login page
-            window.location.href = '/';
-            return false;
-        }
-        
-        // Update user greeting
-        const username = data.username;
-        document.getElementById('userGreeting').textContent = `👋 Hi, ${username}!`;
-        return true;
-    } catch (e) {
-        console.error('Auth check failed:', e);
-        window.location.href = '/';
-        return false;
-    }
-}
-
-// Logout function
-async function handleLogout() {
-    try {
-        const res = await fetch('/api/logout', { method: 'POST' });
-        if (res.ok) {
-            window.location.href = '/';
-        }
-    } catch (e) {
-        console.error('Logout failed:', e);
-    }
-}
-
-// --- SAFE EVENT LISTENERS ---
-const attachListener = (id, event, fn) => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener(event, fn);
-};
-
-attachListener('logoutBtn', 'click', handleLogout);
-attachListener('exportBtn', 'click', () => {
-    window.location.href = '/api/export-pdf';
-});
-attachListener('exportMonthlyBtn', 'click', () => {
-    window.location.href = `/api/export-monthly-pdf?month=${currentMonth}&year=${currentYear}`;
-});
-attachListener('startBtn', 'click', startTracking);
-attachListener('addExpenseBtn', 'click', addExpense);
-
-const allowanceInputEl = document.getElementById('allowanceInput');
-if (allowanceInputEl) {
-    allowanceInputEl.addEventListener('keypress', (e) => { 
-        if (e.key === 'Enter') startTracking(); 
-    });
-}
-
-// State
-let allowance = 0, expenses = {}, selectedDay = '', weekInfo = null;
-let currentMonth = new Date().getMonth() + 1, currentYear = new Date().getFullYear();
-let darkMode = localStorage.getItem('darkMode') !== 'false';
-document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
 
 // DOM Elements
 const setupScreen = document.getElementById('setupScreen');
@@ -99,13 +37,93 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
     });
 });
 
-// Event Listeners
-startBtn.addEventListener('click', startTracking);
-allowanceInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') startTracking(); });
+async function checkAuth() {
+    try {
+        const res = await fetch('/api/check-auth');
+        const data = await res.json();
+        
+        if (!data.authenticated) {
+            // Not logged in, redirect to login page
+            window.location.href = '/';
+            return false;
+        }
+        
+        // Update user greeting
+        const username = data.username;
+        document.getElementById('userGreeting').textContent = `👋 Hi, ${username}!`;
+        return true;
+    } catch (e) {
+        console.error('Auth check failed:', e);
+        window.location.href = '/';
+        return false;
+    }
+}
+
+// Logout function
+async function handleLogout() {
+    try {
+        const res = await fetch('/api/logout', { method: 'POST' });
+        if (res.ok) {
+            window.location.href = '/';
+        } else {
+            alert('Logout failed. Please try again.');
+        }
+    } catch (e) {
+        console.error('Logout failed:', e);
+        alert('Connection error. Please try again.');
+    }
+}
+
+// --- SAFE EVENT LISTENERS ---
+const attachListener = (id, event, fn) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(event, fn);
+};
+
+// --- ATTACH & NAV LISTENERS ---
+attachListener('logoutBtn', 'click', handleLogout);
+attachListener('themeToggle', 'click', toggleTheme);
+
+// --- EXPORT BUTTONS ---
+attachListener('exportBtn', 'click', () => {
+    window.location.href = '/api/export-pdf';
+});
+attachListener('exportMonthlyBtn', 'click', () => {
+    window.location.href = `/api/export-monthly-pdf?month=${currentMonth}&year=${currentYear}`;
+});
+
+// --- MONTH NAVIGATION ---
+attachListener('prevMonth', 'click', () => { 
+    currentMonth--; 
+    if (currentMonth < 1) { currentMonth = 12; currentYear--; } 
+    loadMonthlySummary(); 
+});
+attachListener('nextMonth', 'click', () => { 
+    currentMonth++; 
+    if (currentMonth > 12) { currentMonth = 1; currentYear++; } 
+    loadMonthlySummary(); 
+});
+
+// --- DAY BUTTONS ---
 dayButtons.forEach(btn => btn.addEventListener('click', () => selectDay(btn.dataset.day)));
-addExpenseBtn.addEventListener('click', addExpense);
-document.getElementById('prevMonth').addEventListener('click', () => { currentMonth--; if (currentMonth < 1) { currentMonth = 12; currentYear--; } loadMonthlySummary(); });
-document.getElementById('nextMonth').addEventListener('click', () => { currentMonth++; if (currentMonth > 12) { currentMonth = 1; currentYear++; } loadMonthlySummary(); });
+
+// --- BUDGET TRACKING LISTENERS ---
+attachListener('startBtn', 'click', startTracking);
+attachListener('addExpenseBtn', 'click', addExpense);
+
+// --- ALLOWANCE INPUT KEY ---
+const allowanceInputEl = document.getElementById('allowanceInput');
+if (allowanceInputEl) {
+    allowanceInputEl.addEventListener('keypress', (e) => { 
+        if (e.key === 'Enter') startTracking(); 
+    });
+}
+
+// State
+let allowance = 0, expenses = {}, selectedDay = '', weekInfo = null;
+let currentMonth = new Date().getMonth() + 1, currentYear = new Date().getFullYear();
+let darkMode = localStorage.getItem('darkMode') !== 'false';
+document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
 
 // Theme Toggle
 function toggleTheme() {
