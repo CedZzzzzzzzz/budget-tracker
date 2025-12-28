@@ -301,20 +301,27 @@ def export_pdf():
 
         elements.append (Paragraph("Budget Tracker - Weekly Report", styles["Heading1"]))
         elements.append (Paragraph(f"Week: {week_start} to {week_end}", styles["Normal"]))
-        elements.append (Paragraph(Spacer(1, 20)))
+        elements.append (Spacer(1, 20))
 
         summary_data = [['Allowance', f'₱{budget["allowance"]:.2f}'], ['Total Spent', f'₱{total_spent:.2f}'], ['Remaining', f'₱{budget["allowance"] - total_spent:.2f}']]
         summary_table = Table(summary_data, colWidths=[2 * inch, 2 * inch])
-        summary_table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor('#f8fafc')), ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e2e8f0')), ('PADDING', (0, 0), (-1, -1), 12)]))
-        elements.append(summary_table)
-        elements.append(Spacer (1, 20))
+        summary_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor('#f8fafc')), 
+            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e2e8f0')),
+            ('PADDING', (0, 0), (-1, -1), 12)]))
+        elements.append (summary_table)
+        elements.append (Spacer (1, 20))
 
         expense_data = [['Day', 'Fare', 'Food', 'Other', 'Total']]
         for row in expenses_rows:
             expense_data.append([row['day'], f'₱{row["fare"]:.2f}', f'₱{row["food"]:.2f}', f'₱{row["other"]:.2f}', f'₱{row["total"]:.2f}'])
         
         expense_table = Table(expense_data, colWidths=[1.2*inch, 1*inch, 1*inch, 1*inch, 1*inch])
-        expense_table.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#7c3aed')), ('TEXTCOLOR', (0, 0), (-1, 0), colors.white), ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e2e8f0')), ('PADDING', (0, 0), (-1, -1), 8)]))
+        expense_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#8a2be2')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white), 
+            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e2e8f0')), 
+            ('PADDING', (0, 0), (-1, -1), 8)]))
         elements.append(expense_table)
         
         doc.build(elements)
