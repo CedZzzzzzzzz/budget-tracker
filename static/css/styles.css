@@ -3,7 +3,7 @@
 /* ============== CSS VARIABLES ============== */
 
 :root {
-    /* Gojo Purple Theme - Dark Mode */
+    /* Them Dark Mode */
     --purple-primary: #8a2be2;
     --purple-medium: #9370db;
     --purple-light: #ba55d3;
@@ -47,7 +47,6 @@
 }
 
 [data-theme="light"] {
-    /* Gojo Purple Theme - Light Mode */
     --purple-primary: #8a2be2;
     --purple-medium: #9370db;
     --purple-light: #ba55d3;
