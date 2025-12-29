@@ -123,14 +123,20 @@ if (allowanceInputEl) {
 let allowance = 0, expenses = {}, selectedDay = '', weekInfo = null;
 let currentMonth = new Date().getMonth() + 1, currentYear = new Date().getFullYear();
 let darkMode = localStorage.getItem('darkMode') !== 'false';
-document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+
+// Dark Mode & Light Mode
+function applyTheme(isDark) {
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    const btn = document.getElementById('themeToggle');
+    if (btn) btn.textContent = isDark ? '☀️' : '🌙';
+}
+applyTheme(darkMode);
 
 // Theme Toggle
 function toggleTheme() {
     darkMode = !darkMode;
     localStorage.setItem('darkMode', darkMode);
-    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
-    document.getElementById('themeToggle').textContent = darkMode ? '☀️ Light' : '🌙 Dark';
+    applyTheme(darkMode);
 }
 
 // PDF Export
@@ -266,7 +272,7 @@ function renderExpenseList() {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const today = new Date().getDay(); 
     
-    // Check if we have any expenses to show or any days have passed
+    // Check if any expenses to show or any days have passed
     const hasAnyExpenses = Object.keys(expenses).length > 0;
     const hasPastDays = today > 0; 
     
@@ -449,5 +455,4 @@ window.addEventListener('DOMContentLoaded', async () => {
     
     console.log('=== PAGE LOAD END ===');
     loadMonthlySummary();
-    document.getElementById('themeToggle').textContent = darkMode ? '☀️ Light' : '🌙 Dark';
 });
