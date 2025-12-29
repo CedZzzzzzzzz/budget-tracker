@@ -61,8 +61,8 @@ def register():
         email = data.get("email", "").strip()
         password = data.get("password", "").strip()
 
-        if not username or len(username) < 8:
-            return jsonify({"error" : "Username must be at least 8 characters long."}), 400
+        if not username or len(username) < 3:
+            return jsonify({"error" : "Username must be at least 3 characters long."}), 400
         if not email or "@" not in email:
             return jsonify({"error" : "Inavlid email address."}), 400
         
@@ -99,11 +99,12 @@ def login():
         
         #Get user from database
         user = db.get_user_by_username(username)
+
         if not user:
-            return jsonify({"error" : "Invalid username"}), 401
+            return jsonify({"error" : "Username does not exist"}), 401
         #Password verification
         if not db.verify_password(user, password):
-            return jsonify({"error" : "Invalid password"}), 401
+            return jsonify({"error" : "Incorrect password"}), 401
         
         #Set session
         session ["user_id"] = user["id"]
