@@ -115,3 +115,19 @@ document.getElementById('loginPassword').addEventListener('keypress', (e) => {
 document.getElementById('registerPassword').addEventListener('keypress', (e) => {
     if (e.key === 'Enter') registerBtn.click();
 });
+
+window.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const response = await fetch('/api/check-auth');
+        const data = await response.json();
+        
+        if (data.authenticated) {
+            // User is already logged in, redirect to dashboard
+            console.log('User already authenticated, redirecting to dashboard');
+            window.location.href = '/dashboard';
+        }
+    } catch (error) {
+        // Not authenticated or error - stay on login page
+        console.log('Not authenticated, showing login page');
+    }
+});

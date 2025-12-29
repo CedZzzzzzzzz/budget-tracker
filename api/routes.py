@@ -120,7 +120,7 @@ def logout():
     session.clear()
     return jsonify({"success" : True})
 
-@api.route("/logout", methods = ["GET"])
+@api.route("/check-auth", methods = ["GET"])
 def check_auth():
     if "user_id" in session:
         return jsonify({"authenticated" : True, "username" : session.get("username")})

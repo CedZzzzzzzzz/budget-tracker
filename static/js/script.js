@@ -50,7 +50,7 @@ async function checkAuth() {
         
         // Update user greeting
         const username = data.username;
-        document.getElementById('userGreeting').textContent = `👋 Hi, ${username}!`;
+        document.getElementById('userGreeting').textContent = `Hi, ${username}!`;
         return true;
     } catch (e) {
         console.error('Auth check failed:', e);
@@ -388,6 +388,12 @@ window.exportMonthlyPDF = exportMonthlyPDF;
 window.addEventListener('DOMContentLoaded', async () => {
     console.log('=== PAGE LOAD START ===');
     
+    const isAuthenticated = await checkAuth();
+    if (!isAuthenticated) {
+        console.log('User not authenticated, redirecting to login.');
+        return;
+    }
+    console.log('User authenticated successfully.');
     // Disable future day buttons immediately
     updateDayButtons();
     
