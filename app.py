@@ -45,13 +45,17 @@ if __name__ == "__main__":
     app = create_app(config_name)
     week_start, week_end = get_week_range()
 
-    print("\n" + "="*50)
-    print("💳 BUDGET TRACKER 💳")
-    print("="*50)
-    print(f"http://localhost:5000")
-    print(f"Week: {week_start} to {week_end}")
-    print("="*50 + "\n")
+    if config_name == "development":
+        week_start, week_end = get_week_range()
+        
+        print("\n" + "="*50)
+        print("💳 BUDGET TRACKER 💳")
+        print("="*50)
+        print(f"http://localhost:5000")
+        print(f"Week: {week_start} to {week_end}")
+        print("="*50 + "\n")
 
-    app.run(host = "0.0.0.0", port = 5000, debug = True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host = "0.0.0.0", port = 5000, debug = (config_name == "development"))
 
 
