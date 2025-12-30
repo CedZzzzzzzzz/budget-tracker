@@ -58,5 +58,5 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host = "0.0.0.0", port = 5000, debug = (config_name == "development"))
 
-app = create_app(ps.getenv("FLASK_ENV", "production"))
+app = create_app(os.getenv("FLASK_ENV", "production"))
 
