@@ -1115,19 +1115,19 @@ input[type="number"]:focus {
 .mobile-menu {
     position: fixed;
     top: 0;
-    left: -280px;
+    right: -280px; 
+    left: auto;    
     width: 280px;
     height: 100vh;
     background: var(--bg-card);
-    border-right: 1px solid var(--border-card);
+    border-left: 1px solid var(--border-card); 
     z-index: 2000;
-    transition: left 0.3s ease;
+    transition: right 0.3s ease; 
     padding: 20px;
-    overflow-y: auto;
 }
 
 .mobile-menu.active {
-    left: 0;
+    right: 0;
 }
 
 .mobile-menu-header {
@@ -1235,8 +1235,7 @@ input[type="number"]:focus {
     }
     
     .header-left h1 {
-        justify-content: left;
-        align-items: left;
+        margin-right: auto;
         font-size: 20px;
     }
     
@@ -1247,7 +1246,7 @@ input[type="number"]:focus {
     .header-actions {
         display: flex !important;
         width: auto !important;
-        margin-right: auto !important; 
+        margin-left: auto !important; 
         justify-content: flex-end;
     }
 
