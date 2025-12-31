@@ -1174,7 +1174,6 @@ input[type="number"]:focus {
     transform: translateX(5px);
 }
 
-/* Mobile Overlay */
 .mobile-overlay {
     display: none;
     position: fixed;
@@ -1190,7 +1189,6 @@ input[type="number"]:focus {
     display: block;
 }
 
-/* Hide desktop-only elements on mobile */
 .desktop-only {
     display: inline-block;
 }
@@ -1215,9 +1213,7 @@ input[type="number"]:focus {
         padding: 8px 12px;
         margin-right: 5px;
     }
-    
-    /* Header adjustments */
-    .header {
+        .header {
         padding: 12px;
         margin-bottom: 12px;
         flex-direction: row !important;
@@ -1247,7 +1243,6 @@ input[type="number"]:focus {
         display: none !important;
     }
     
-    /* Container padding */
     body {
         padding: 8px;
     }
@@ -1256,7 +1251,6 @@ input[type="number"]:focus {
         padding: 0;
     }
     
-    /* Tabs */
     .nav-tabs {
         gap: 6px;
         padding: 6px;
@@ -1278,7 +1272,6 @@ input[type="number"]:focus {
         font-size: 22px;
     }
     
-    /* Week banner */
     .week-banner {
         padding: 12px;
         margin-bottom: 12px;
@@ -1293,13 +1286,11 @@ input[type="number"]:focus {
         font-size: 24px;
     }
     
-    /* Tracker grid - Stack on mobile */
     .tracker-grid {
         grid-template-columns: 1fr;
         gap: 12px;
     }
     
-    /* Cards */
     .card {
         padding: 16px;
         margin-bottom: 12px;
@@ -1311,7 +1302,6 @@ input[type="number"]:focus {
         margin-bottom: 12px;
     }
     
-    /* Stats */
     .stat-value-large {
         font-size: 24px;
     }
@@ -1320,7 +1310,6 @@ input[type="number"]:focus {
         font-size: 16px;
     }
     
-    /* Day buttons */
     .day-buttons {
         grid-template-columns: repeat(7, 1fr);
         gap: 6px;
@@ -1331,13 +1320,11 @@ input[type="number"]:focus {
         font-size: 11px;
     }
     
-    /* Expense grid */
     .expense-grid {
         grid-template-columns: 1fr;
         gap: 10px;
     }
     
-    /* Monthly stats */
     .monthly-stats {
         grid-template-columns: 1fr;
         gap: 10px;
@@ -1347,7 +1334,6 @@ input[type="number"]:focus {
         font-size: 24px;
     }
     
-    /* Monthly header - FIX FOR HORIZONTAL SCROLL */
     .monthly-header {
         flex-direction: column;
         gap: 12px;
@@ -1370,19 +1356,16 @@ input[type="number"]:focus {
         display: block !important;
     }
     
-    /* Monthly content */
     .monthly-content {
         grid-template-columns: 1fr;
         gap: 12px;
     }
     
-    /* Week stats */
     .week-stats {
         grid-template-columns: 1fr;
         gap: 10px;
     }
     
-    /* Prevent horizontal scroll */
     body {
         overflow-x: hidden;
     }
