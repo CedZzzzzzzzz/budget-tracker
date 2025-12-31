@@ -74,6 +74,34 @@ async function handleLogout() {
     }
 }
 
+// Mobile Menu Functions
+function toggleMobileMenu() {
+    const menu = document.getElementById('mobileMenu');
+    const overlay = document.getElementById('mobileOverlay');
+    menu.classList.toggle('active');
+    overlay.classList.toggle('active');
+}
+
+function closeMobileMenu() {
+    const menu = document.getElementById('mobileMenu');
+    const overlay = document.getElementById('mobileOverlay');
+    menu.classList.remove('active');
+    overlay.classList.remove('active');
+}
+
+// Attach mobile menu button listener
+attachListener('mobileMenuBtn', 'click', toggleMobileMenu);
+
+// Update mobile theme icon when toggling
+const originalToggleTheme = toggleTheme;
+toggleTheme = function() {
+    originalToggleTheme();
+    const mobileIcon = document.getElementById('mobileThemeIcon');
+    if (mobileIcon) {
+        mobileIcon.textContent = darkMode ? '☀️' : '🌙';
+    }
+};
+
 // --- SAFE EVENT LISTENERS ---
 const attachListener = (id, event, fn) => {
     const el = document.getElementById(id);

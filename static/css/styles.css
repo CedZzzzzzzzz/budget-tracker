@@ -286,7 +286,6 @@ body {
     color: var(--purple-medium);
     text-decoration: underline;
 }
-
 /* ============== HEADER ============== */
 
 .header { 
@@ -1095,4 +1094,302 @@ input[type="number"]:focus {
 .auth-container { margin: 40px 20px; padding: 30px 20px; }
 .auth-header h1 { font-size: 26px; }
 .auth-form h2 { font-size: 20px; }
+}
+
+/* ============== MOBILE RESPONSIVE FIXES ============== */
+
+/* Add these styles to your existing styles.css */
+
+/* Mobile Menu Button - Hidden by default */
+.mobile-menu-btn {
+    display: none;
+    background: var(--bg-card);
+    border: 1px solid var(--border-card);
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-size: 20px;
+    cursor: pointer;
+    color: var(--text-primary);
+}
+
+/* Mobile Menu Sidebar */
+.mobile-menu {
+    position: fixed;
+    top: 0;
+    left: -280px;
+    width: 280px;
+    height: 100vh;
+    background: var(--bg-card);
+    border-right: 1px solid var(--border-card);
+    z-index: 2000;
+    transition: left 0.3s ease;
+    padding: 20px;
+    overflow-y: auto;
+}
+
+.mobile-menu.active {
+    left: 0;
+}
+
+.mobile-menu-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid var(--border-card);
+}
+
+.mobile-menu-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.mobile-menu-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--text-secondary);
+}
+
+.mobile-menu-item {
+    display: block;
+    width: 100%;
+    padding: 14px 16px;
+    background: var(--input-bg);
+    border: none;
+    border-radius: 10px;
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-bottom: 10px;
+    text-align: left;
+    transition: all 0.3s;
+}
+
+.mobile-menu-item:hover {
+    background: var(--border-card);
+    transform: translateX(5px);
+}
+
+/* Mobile Overlay */
+.mobile-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 1999;
+}
+
+.mobile-overlay.active {
+    display: block;
+}
+
+/* Hide desktop-only elements on mobile */
+.desktop-only {
+    display: inline-block;
+}
+
+/* ============== MOBILE MEDIA QUERIES ============== */
+
+@media (max-width: 768px) {
+    /* Hide desktop elements */
+    .desktop-only {
+        display: none !important;
+    }
+    
+    .btn-theme,
+    .btn-export,
+    .btn-logout {
+        display: none !important;
+    }
+    
+    /* Show mobile menu button */
+    .mobile-menu-btn {
+        display: block;
+    }
+    
+    /* Header adjustments */
+    .header {
+        padding: 12px;
+        margin-bottom: 12px;
+    }
+    
+    .header-left h1 {
+        font-size: 20px;
+    }
+    
+    .header-subtitle {
+        font-size: 12px;
+    }
+    
+    .header-actions {
+        gap: 12px;
+    }
+    
+    /* Container padding */
+    body {
+        padding: 8px;
+    }
+    
+    .container {
+        padding: 0;
+    }
+    
+    /* Tabs */
+    .nav-tabs {
+        gap: 6px;
+        padding: 6px;
+        margin-bottom: 12px;
+    }
+    
+    .nav-tab {
+        padding: 10px 8px;
+        font-size: 13px;
+    }
+    
+    /* Setup card */
+    .setup-card {
+        padding: 24px 20px;
+        margin: 20px 0;
+    }
+    
+    .setup-card h2 {
+        font-size: 22px;
+    }
+    
+    /* Week banner */
+    .week-banner {
+        padding: 12px;
+        margin-bottom: 12px;
+    }
+    
+    .week-banner-content {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+    
+    .countdown-value {
+        font-size: 24px;
+    }
+    
+    /* Tracker grid - Stack on mobile */
+    .tracker-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+    
+    /* Cards */
+    .card {
+        padding: 16px;
+        margin-bottom: 12px;
+    }
+    
+    .card-title,
+    .card-title-small {
+        font-size: 15px;
+        margin-bottom: 12px;
+    }
+    
+    /* Stats */
+    .stat-value-large {
+        font-size: 24px;
+    }
+    
+    .stat-value {
+        font-size: 16px;
+    }
+    
+    /* Day buttons */
+    .day-buttons {
+        grid-template-columns: repeat(7, 1fr);
+        gap: 6px;
+    }
+    
+    .day-btn {
+        padding: 10px 2px;
+        font-size: 11px;
+    }
+    
+    /* Expense grid */
+    .expense-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+    
+    /* Monthly stats */
+    .monthly-stats {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+    
+    .monthly-stat-value {
+        font-size: 24px;
+    }
+    
+    /* Monthly header - FIX FOR HORIZONTAL SCROLL */
+    .monthly-header {
+        flex-direction: column;
+        gap: 12px;
+        align-items: stretch;
+    }
+    
+    .monthly-actions {
+        flex-direction: column;
+        gap: 10px;
+        width: 100%;
+    }
+    
+    .month-selector {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .monthly-actions .btn-export {
+        width: 100%;
+        display: block !important;
+    }
+    
+    /* Monthly content */
+    .monthly-content {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+    
+    /* Week stats */
+    .week-stats {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+    
+    /* Prevent horizontal scroll */
+    body {
+        overflow-x: hidden;
+    }
+    
+    .container {
+        overflow-x: hidden;
+        max-width: 100%;
+    }
+}
+
+/* Extra small devices */
+@media (max-width: 480px) {
+    .header-left h1 {
+        font-size: 18px;
+    }
+    
+    .day-buttons {
+        grid-template-columns: repeat(4, 1fr);
+    }
+    
+    .week-banner-content {
+        font-size: 13px;
+    }
 }

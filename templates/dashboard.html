@@ -23,7 +23,28 @@
                 <button id="exportBtn" class="btn-export hidden" onclick="exportWeeklyPDF()">Export PDF</button>
                 <button id="logoutBtn" class="btn-logout">Logout</button>
             </div>
+            <button id="mobileMenuBtn" class="mobile-menu-btn">☰</button>
         </div>
+
+        <!-- Mobile Menu Sidebar -->
+        <div id="mobileMenu" class="mobile-menu">
+            <div class="mobile-menu-header">
+                <span class="mobile-menu-title">Menu</span>
+                <button class="mobile-menu-close" onclick="closeMobileMenu()">✕</button>
+            </div>
+            <button class="mobile-menu-item" onclick="toggleTheme(); closeMobileMenu()">
+                <span id="mobileThemeIcon">☀️</span> Toggle Theme
+            </button>
+            <button id="mobileExportBtn" class="mobile-menu-item hidden" onclick="exportWeeklyPDF(); closeMobileMenu()">
+                📄 Export PDF
+            </button>
+            <button class="mobile-menu-item" onclick="handleLogout()">
+                🚪 Logout
+            </button>
+        </div>
+
+        <!-- Mobile Overlay -->
+        <div id="mobileOverlay" class="mobile-overlay" onclick="closeMobileMenu()"></div>
 
         <!-- Tabs -->
         <div class="nav-tabs">
