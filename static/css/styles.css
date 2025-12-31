@@ -1208,23 +1208,30 @@ input[type="number"]:focus {
     
     /* Show mobile menu button */
     .mobile-menu-btn {
-        display: block;
-        order: -1;
-        padding: 8px 12px;
-        margin-right: 5px;
+        display: block !important;
+        background-color: var(--purple-primary);
+        color: white;
+        border: none;
+        border-radius: 10px;
+        padding: 10px 14px;
+        cursor: pointer;
+        font-size: 20px;
     }
-        .header {
-        padding: 12px;
-        margin-bottom: 12px;
-        flex-direction: row !important;
-        align-items: center;
+    .header {
+        display: flex !important;
+        flex-direction: row !important; /* Keep items side-by-side */
+        justify-content: space-between !important; /* Push title left, button right */
+        align-items: center !important;
+        width: 100%;
+        padding: 10px 0;
     }
 
     .header-left {
+        display: flex !important;
         flex-direction: row !important;
-        justify-content: flex-start;
-        width: 100%;
-        gap: 15px
+        width: auto !important; /* CHANGE: Remove 100% width */
+        align-items: center;
+        gap: 10px;
     }
     
     .header-left h1 {
@@ -1236,7 +1243,10 @@ input[type="number"]:focus {
     }
     
     .header-actions {
-        gap: 12px;
+        display: flex !important;
+        width: auto !important;
+        margin-left: auto !important; /* Pushes to far right */
+        justify-content: flex-end;
     }
 
     .user-greeting.desktop-only {
