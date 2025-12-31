@@ -1219,8 +1219,8 @@ input[type="number"]:focus {
     }
     .header {
         display: flex !important;
-        flex-direction: row !important; /* Keep items side-by-side */
-        justify-content: space-between !important; /* Push title left, button right */
+        flex-direction: row !important; 
+        justify-content: space-between !important; 
         align-items: center !important;
         width: 100%;
         padding: 10px 0;
@@ -1229,12 +1229,14 @@ input[type="number"]:focus {
     .header-left {
         display: flex !important;
         flex-direction: row !important;
-        width: auto !important; /* CHANGE: Remove 100% width */
+        width: auto !important; 
         align-items: center;
         gap: 10px;
     }
     
     .header-left h1 {
+        justify-content: left;
+        align-items: left;
         font-size: 20px;
     }
     
@@ -1245,7 +1247,7 @@ input[type="number"]:focus {
     .header-actions {
         display: flex !important;
         width: auto !important;
-        margin-left: auto !important; /* Pushes to far right */
+        margin-right: auto !important; 
         justify-content: flex-end;
     }
 
