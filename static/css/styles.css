@@ -1219,7 +1219,7 @@ input[type="number"]:focus {
     }
     .header {
         display: flex !important;
-        flex-direction: column !important; 
+        flex-direction: row !important; 
         justify-content: space-between !important; 
         align-items: flex-start !important;
         width: 100%;
