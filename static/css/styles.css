@@ -1221,7 +1221,7 @@ input[type="number"]:focus {
         display: flex !important;
         flex-direction: row !important; 
         justify-content: space-between !important; 
-        align-items: flex-start !important;
+        align-items: center !important;
         width: 100%;
         padding: 10px 0;
     }
@@ -1230,18 +1230,18 @@ input[type="number"]:focus {
         display: flex !important;
         flex-direction: row !important;
         width: auto !important; 
-        align-items: flex-start;
+        align-items: center;
         gap: 10px;
+        text-align: left;
     }
     
     .header-left h1 {
-        font-size: 20px;
         text-align: left;
+        font-size: 20px;
     }
     
     .header-subtitle {
         font-size: 12px;
-        text-align: left;
     }
     
     .header-actions {
@@ -1249,7 +1249,6 @@ input[type="number"]:focus {
         width: auto !important;
         margin-left: auto !important; 
         justify-content: flex-end;
-        margin-top: -40px;
     }
 
     .user-greeting.desktop-only {
