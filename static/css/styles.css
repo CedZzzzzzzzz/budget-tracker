@@ -1235,8 +1235,6 @@ input[type="number"]:focus {
     }
     
     .header-left h1 {
-        margin-left: -10px;
-        padding-left: 0;
         font-size: 20px;
     }
     
