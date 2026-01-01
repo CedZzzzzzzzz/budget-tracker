@@ -3,7 +3,7 @@ from psycopg2.extras import RealDictCursor
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
 
-# Get database URL from environment variable (Railway provides this automatically)
+# Get database URL from environment variable
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
 def get_db():

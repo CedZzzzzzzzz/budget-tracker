@@ -2,11 +2,14 @@ from flask import Flask, render_template, session, redirect, url_for
 from flask_cors import CORS
 import os
 from dotenv import load_dotenv
+
+load_dotenv()
+
 from config import config
 import database as db
 from api.routes import api, get_week_range
 
-load_dotenv()
+
 
 def create_app(config_name = "default"):
     app = Flask(__name__)
