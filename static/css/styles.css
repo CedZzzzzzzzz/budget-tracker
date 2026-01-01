@@ -1210,7 +1210,7 @@ input[type="number"]:focus {
     .mobile-menu-btn {
         display: block !important;
         background-color: var(--purple-primary);
-        color: white;
+        color: var(--purple-primary);
         border: none;
         border-radius: 10px;
         padding: 10px 14px;
