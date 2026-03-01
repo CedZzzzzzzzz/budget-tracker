@@ -143,7 +143,7 @@ def _bar_chart(labels, values, bar_colors, width=420, height=108):
         d.add(Rect(x, y, bw, max(bh, 2), fillColor=c, strokeColor=None))
         if val > 0:
             d.add(String(x + bw / 2, y + bh + 3,
-                         f"\u20b1{val:,.0f}",
+                         f"{val:,.0f}",
                          fillColor=TEXT_WHITE, fontSize=6, textAnchor="middle"))
         d.add(String(x + bw / 2, y - 14, label,
                      fillColor=TEXT_LIGHT, fontSize=6, textAnchor="middle"))
@@ -557,11 +557,11 @@ def export_pdf():
         for r in db_rows:
             d = week_start + timedelta(days=DAYS_MAP.get(r["day"], 0))
             ds = d.strftime("%b %d")
-            if r["fare"]  > 0: exp_rows.append([ds, "Transportation", f"Fare ({r['day']})",  f"\u20b1{r['fare']:,.2f}"])
-            if r["food"]  > 0: exp_rows.append([ds, "Food",           f"Food ({r['day']})",  f"\u20b1{r['food']:,.2f}"])
-            if r["other"] > 0: exp_rows.append([ds, "Other",          f"Other ({r['day']})", f"\u20b1{r['other']:,.2f}"])
+            if r["fare"]  > 0: exp_rows.append([ds, "Transportation", f"Fare ({r['day']})",  f"{r['fare']:,.2f}"])
+            if r["food"]  > 0: exp_rows.append([ds, "Food",           f"Food ({r['day']})",  f"{r['food']:,.2f}"])
+            if r["other"] > 0: exp_rows.append([ds, "Other",          f"Other ({r['day']})", f"{r['other']:,.2f}"])
         if not exp_rows:
-            exp_rows = [["—", "—", "No expenses logged yet", "\u20b10.00"]]
+            exp_rows = [["—", "—", "No expenses logged yet", "0.00"]]
 
         elements = []
 
@@ -572,9 +572,9 @@ def export_pdf():
 
         # stat cards
         elements.append(_stat_cards_row(
-            _stat_card("Allowance",   f"\u20b1{budget['allowance']:,.2f}", PURPLE_MAIN),
-            _stat_card("Total Spent", f"\u20b1{t_spent:,.2f}",             PINK),
-            _stat_card("Remaining",   f"\u20b1{remaining:,.2f}",           GREEN),
+            _stat_card("Allowance",   f"{budget['allowance']:,.2f}", PURPLE_MAIN),
+            _stat_card("Total Spent", f"{t_spent:,.2f}",             PINK),
+            _stat_card("Remaining",   f"{remaining:,.2f}",           GREEN),
             _stat_card("Days Logged", f"{len(db_rows)} / 7",               GOLD),
         ))
         elements.append(Spacer(1, 10))
@@ -585,26 +585,26 @@ def export_pdf():
             _data_table(
                 ["Date", "Source", "Description", "Amount"],
                 [[week_start.strftime("%b %d"), "Allowance",
-                  f"{username}'s weekly budget", f"\u20b1{budget['allowance']:,.2f}"]],
+                  f"{username}'s weekly budget", f"{budget['allowance']:,.2f}"]],
                 icw,
             ),
-            _total_row("Total Income", f"\u20b1{budget['allowance']:,.2f}", icw),
+            _total_row("Total Income", f"{budget['allowance']:,.2f}", icw),
             Spacer(1, 8),
             _section_label("Savings"),
             _data_table(
                 ["Method", "Amount Saved", "Notes"],
-                [["End balance",  f"\u20b1{remaining:,.2f}", "Remaining this week"],
-                 ["Disbursed",    f"\u20b1{t_spent:,.2f}",  "Fare + Food + Other"]],
+                [["End balance",  f"{remaining:,.2f}", "Remaining this week"],
+                 ["Disbursed",    f"{t_spent:,.2f}",  "Fare + Food + Other"]],
                 scw,
             ),
-            _total_row("Total Saved", f"\u20b1{remaining:,.2f}", scw),
+            _total_row("Total Saved", f"{remaining:,.2f}", scw),
         ]
 
         # right column — Expenses
         right = [
             _section_label("Expenses"),
             _data_table(["Date", "Category", "Description", "Amount"], exp_rows, ecw),
-            _total_row("Total Expenses", f"\u20b1{t_spent:,.2f}", ecw),
+            _total_row("Total Expenses", f"{t_spent:,.2f}", ecw),
         ]
 
         # two-column layout
@@ -697,9 +697,9 @@ def export_monthly_pdf():
 
         income_rows = [
             [w["week_start_date"], "Allowance",
-             f"Week {i+1} budget", f"\u20b1{w['allowance']:,.2f}"]
+             f"Week {i+1} budget", f"{w['allowance']:,.2f}"]
             for i, w in enumerate(weeks)
-        ] or [["—", "—", "No data", "\u20b10.00"]]
+        ] or [["—", "—", "No data", "0.00"]]
 
         elements = []
 
@@ -708,9 +708,9 @@ def export_monthly_pdf():
         elements.append(Spacer(1, 10))
 
         elements.append(_stat_cards_row(
-            _stat_card("Total Allowance", f"\u20b1{t_allow:,.2f}", PURPLE_MAIN),
-            _stat_card("Total Spent",     f"\u20b1{t_spent:,.2f}", PINK),
-            _stat_card("Total Saved",     f"\u20b1{t_saved:,.2f}", GREEN),
+            _stat_card("Total Allowance", f"{t_allow:,.2f}", PURPLE_MAIN),
+            _stat_card("Total Spent",     f"{t_spent:,.2f}", PINK),
+            _stat_card("Total Saved",     f"{t_saved:,.2f}", GREEN),
             _stat_card("Weeks Tracked",   f"{len(weeks)} wk(s)",   GOLD),
         ))
         elements.append(Spacer(1, 10))
@@ -719,28 +719,28 @@ def export_monthly_pdf():
             _section_label("Income"),
             _data_table(["Date", "Source", "Description", "Amount"],
                         income_rows, icw),
-            _total_row("Total Income", f"\u20b1{t_allow:,.2f}", icw),
+            _total_row("Total Income", f"{t_allow:,.2f}", icw),
             Spacer(1, 8),
             _section_label("Savings"),
             _data_table(
                 ["Method", "Amount Saved", "Notes"],
-                [["Monthly balance", f"\u20b1{t_saved:,.2f}", "Total saved this month"],
-                 ["Total spent",     f"\u20b1{t_spent:,.2f}", "All expenses combined"]],
+                [["Monthly balance", f"{t_saved:,.2f}", "Total saved this month"],
+                 ["Total spent",     f"{t_spent:,.2f}", "All expenses combined"]],
                 scw,
             ),
-            _total_row("Total Saved", f"\u20b1{t_saved:,.2f}", scw),
+            _total_row("Total Saved", f"{t_saved:,.2f}", scw),
         ]
 
         right = [
             _section_label("Expenses"),
             _data_table(
                 ["Date", "Category", "Description", "Amount"],
-                [["—", "Transportation", "Monthly fare total",  f"\u20b1{t_fare:,.2f}"],
-                 ["—", "Food",           "Monthly food total",  f"\u20b1{t_food:,.2f}"],
-                 ["—", "Other",          "Monthly other total", f"\u20b1{t_other:,.2f}"]],
+                [["—", "Transportation", "Monthly fare total",  f"{t_fare:,.2f}"],
+                 ["—", "Food",           "Monthly food total",  f"{t_food:,.2f}"],
+                 ["—", "Other",          "Monthly other total", f"{t_other:,.2f}"]],
                 ecw,
             ),
-            _total_row("Total Expenses", f"\u20b1{t_spent:,.2f}", ecw),
+            _total_row("Total Expenses", f"{t_spent:,.2f}", ecw),
         ]
 
         body = Table(
