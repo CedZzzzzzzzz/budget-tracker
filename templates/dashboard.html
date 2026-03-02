@@ -1,193 +1,514 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Budget Tracker</title>
-    <link rel="setup-icon" type="images/png" href="/images/favicon/fav.png">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Budget Tracker</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon/fav.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <div class="header">
-            <div class="header-left">
-                <div>
-                    <h1>Budget Tracker</h1>
-                    <p class="header-subtitle">Master your finances with style</p>
-                </div>
-            </div>
-            <div class="header-actions">
-                <span id="userGreeting" class="user-greeting desktop-only"></span>
-                <button id="mobileMenuBtn" class="mobile-menu-btn">☰</button>
-                <button id="themeToggle" class="btn-theme">☀️</button>
-                <button id="exportBtn" class="btn-export hidden" onclick="exportWeeklyPDF()">Export PDF</button>
-                <button id="logoutBtn" class="btn-logout">Logout</button>
-            </div>
-        </div>
+  <div id="root"></div>
 
-        <!-- Mobile Menu Sidebar -->
-        <div id="mobileMenu" class="mobile-menu">
-            <div class="mobile-menu-header">
-                <span class="mobile-menu-title">Menu</span>
-                <button class="mobile-menu-close" onclick="closeMobileMenu()">✕</button>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+  {% raw %}
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+    function MobileMenu({ open, onClose, darkMode, onTheme, showExport, onExport, onLogout, currentMonth, currentYear }) {
+      return (
+        <>
+          <div id="mobileOverlay" className={`mobile-overlay ${open ? 'active' : ''}`} onClick={onClose} />
+          <div id="mobileMenu" className={`mobile-menu ${open ? 'active' : ''}`}>
+            <div className="mobile-menu-header">
+              <span className="mobile-menu-title">Menu</span>
+              <button className="mobile-menu-close" onClick={onClose}>✕</button>
             </div>
-            <button class="mobile-menu-item" onclick="toggleTheme(); closeMobileMenu()">
-                <span id="mobileThemeIcon">☀️</span> Toggle Theme
+            <button className="mobile-menu-item" onClick={() => { onTheme(); onClose(); }}>
+              <span>{darkMode ? '☀️' : '🌙'}</span> Toggle Theme
             </button>
-            <button id="mobileExportBtn" class="mobile-menu-item hidden" onclick="exportWeeklyPDF(); closeMobileMenu()">
-                 Export PDF
+            {showExport && (
+              <button className="mobile-menu-item" onClick={() => { onExport(); onClose(); }}>
+                Export PDF
+              </button>
+            )}
+            <button className="mobile-menu-item" onClick={() => { window.location.href = `/api/export-monthly-pdf?month=${currentMonth}&year=${currentYear}`; onClose(); }}>
+              Monthly PDF
             </button>
-            <button class="mobile-menu-item" onclick="handleLogout()">
-                 Logout
+            <button className="mobile-menu-item" onClick={() => { onLogout(); onClose(); }}>
+              Logout
             </button>
+          </div>
+        </>
+      );
+    }
+
+    function SetupScreen({ weekInfo, onStart }) {
+      const [val, setVal] = useState('');
+      const [loading, setLoading] = useState(false);
+
+      const start = async () => {
+        const n = parseFloat(val);
+        if (!n || n <= 0) return alert('Enter valid allowance');
+        setLoading(true);
+        try {
+          const r = await fetch('/api/set-allowance', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ allowance: n }),
+          });
+          if (r.ok) onStart(n);
+        } catch {
+          alert('Server error');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div id="setupScreen" className="screen active">
+          <div className="setup-card">
+            <div className="setup-icon">💵</div>
+            <h2>Start Your Week</h2>
+            {weekInfo && <p id="weekRange" className="setup-subtitle">{weekInfo.week_start_formatted} - {weekInfo.week_end_formatted}</p>}
+            <p className="setup-note">Week starts on Sunday</p>
+            <div className="input-group">
+              <label htmlFor="allowanceInput">Weekly Allowance (₱)</label>
+              <input type="number" id="allowanceInput" placeholder="e.g., 1000" min="0" step="0.01"
+                value={val} onChange={e => setVal(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && start()} />
+              <button id="startBtn" className="btn btn-primary" onClick={start} disabled={loading}>
+                {loading ? 'Starting...' : 'Start Tracking →'}
+              </button>
+            </div>
+          </div>
         </div>
+      );
+    }
 
-        <!-- Mobile Overlay -->
-        <div id="mobileOverlay" class="mobile-overlay" onclick="closeMobileMenu()"></div>
+    function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
+      const [selDay, setSelDay] = useState('');
+      const [fare, setFare] = useState('');
+      const [food, setFood] = useState('');
+      const [other, setOther] = useState('');
+      const today = new Date().getDay();
 
-        <!-- Tabs -->
-        <div class="nav-tabs">
-            <button class="nav-tab active" data-tab="weekly">📅 Weekly Budget</button>
-            <button class="nav-tab" data-tab="monthly">📊 Monthly Summary</button>
-        </div>
+      const selectDay = (day, i) => {
+        if (expenses[day] || i > today) return;
+        setSelDay(day);
+        setFare(''); setFood(''); setOther('');
+      };
 
-        <!-- Weekly Tab -->
-        <div id="weeklyTab" class="tab-content active">
-            <div id="setupScreen" class="screen active">
-                <div class="setup-card">
-                    <div class="setup-icon">💵</div>
-                    <h2>Start Your Week</h2>
-                    <p id="weekRange" class="setup-subtitle"></p>
-                    <p class="setup-note">Week starts on Sunday</p>
-                    <div class="input-group">
-                        <label for="allowanceInput">Weekly Allowance (₱)</label>
-                        <input type="number" id="allowanceInput" placeholder="e.g., 1000" min="0" step="0.01">
-                        <button id="startBtn" class="btn btn-primary">Start Tracking →</button>
-                    </div>
+      const addExpense = async () => {
+        if (!selDay) return;
+        const f = parseFloat(fare) || 0;
+        const fd = parseFloat(food) || 0;
+        const o = parseFloat(other) || 0;
+        if (!f && !fd && !o) return alert('Enter at least one expense');
+        try {
+          const r = await fetch('/api/add-expense', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ day: selDay, fare: f, food: fd, other: o }),
+          });
+          if (r.ok) {
+            setSelDay(''); setFare(''); setFood(''); setOther('');
+            onRefresh();
+          }
+        } catch {
+          alert('Server error');
+        }
+      };
+
+      const deleteExpense = async (day) => {
+        if (!confirm(`Delete ${day}?`)) return;
+        try {
+          await fetch(`/api/delete-expense/${day}`, { method: 'DELETE' });
+          onRefresh();
+        } catch {
+          alert('Server error');
+        }
+      };
+
+      const pct = allowance ? (totals.spent / allowance) * 100 : 0;
+      const fillClass = pct > 100 ? 'danger' : pct > 80 ? 'warning' : '';
+
+      const expenseRows = DAYS.map((day, i) => {
+        const e = expenses[day];
+        const isToday = i === today;
+        const isFuture = i > today;
+        if (isFuture || (isToday && !e)) return null;
+        return { day, i, e, isToday };
+      }).filter(Boolean);
+
+      return (
+        <div id="trackerScreen" className="screen active">
+          {weekInfo && (
+            <div className="week-banner">
+              <div className="week-banner-content">
+                <div className="week-info">
+                  <span className="week-label">Current Week</span>
+                  <span id="weekDates" className="week-dates">{weekInfo.week_start_formatted} - {weekInfo.week_end_formatted}</span>
                 </div>
+                <div className="week-countdown">
+                  <span className="countdown-label">Days Left</span>
+                  <span id="daysRemaining" className="countdown-value">{weekInfo.days_remaining}</span>
+                </div>
+                <div className="current-day">
+                  <span className="current-day-label">Today</span>
+                  <span id="currentDay" className="current-day-value">{weekInfo.current_day}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="tracker-grid">
+            <div className="sidebar">
+              <div className="card">
+                <h3 className="card-title-small">💳 Overview</h3>
+                <div className="stat-main">
+                  <p className="stat-label">Allowance</p>
+                  <p className="stat-value-large" id="allowanceDisplay">₱{allowance.toFixed(2)}</p>
+                </div>
+                <div className="stats-list">
+                  <div className="stat-item spent">
+                    <p className="stat-label">Spent</p>
+                    <p className="stat-value" id="spentAmount">₱{totals.spent.toFixed(2)}</p>
+                  </div>
+                  <div className="stat-item remaining">
+                    <p className="stat-label">Remaining</p>
+                    <p className={`stat-value ${totals.remaining < 0 ? 'negative' : ''}`} id="remainingAmount">₱{totals.remaining.toFixed(2)}</p>
+                  </div>
+                  <div className="stat-item days">
+                    <p className="stat-label">Days Logged</p>
+                    <p className="stat-value" id="daysLogged">{Object.keys(expenses).length}/7</p>
+                  </div>
+                </div>
+                <div className="progress-section">
+                  <div className="progress-info">
+                    <span>Progress</span>
+                    <span id="percentUsed">{Math.min(pct, 100).toFixed(0)}%</span>
+                  </div>
+                  <div className="progress-bar">
+                    <div id="progressFill" className={`progress-fill ${fillClass}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                  </div>
+                </div>
+                {totals.remaining < 0 && (
+                  <div id="warningMessage" className="warning-box">
+                    <p>⚠️ Over budget!</p>
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div id="trackerScreen" class="screen">
-                <!-- Week Banner -->
-                <div class="week-banner">
-                    <div class="week-banner-content">
-                        <div class="week-info">
-                            <span class="week-label">Current Week</span>
-                            <span id="weekDates" class="week-dates"></span>
-                        </div>
-                        <div class="week-countdown">
-                            <span class="countdown-label">Days Left</span>
-                            <span id="daysRemaining" class="countdown-value">0</span>
-                        </div>
-                        <div class="current-day">
-                            <span class="current-day-label">Today</span>
-                            <span id="currentDay" class="current-day-value"></span>
-                        </div>
-                    </div>
+            <div className="main-content">
+              <div className="card">
+                <h3 className="card-title">➕ Add Daily Expenses</h3>
+                <p className="input-label">Select Day</p>
+                <div className="day-buttons" id="dayButtons">
+                  {DAYS.map((day, i) => (
+                    <button key={day}
+                      className={`day-btn ${selDay === day ? 'selected' : ''}`}
+                      onClick={() => selectDay(day, i)}
+                      disabled={i > today || !!expenses[day]}>
+                      {day.slice(0, 3)}
+                    </button>
+                  ))}
                 </div>
 
-                <div class="tracker-grid">
-                    <!-- Stats Sidebar -->
-                    <div class="sidebar">
-                        <div class="card">
-                            <h3 class="card-title-small">💳 Overview</h3>
-                            <div class="stat-main">
-                                <p class="stat-label">Allowance</p>
-                                <p class="stat-value-large" id="allowanceDisplay">₱0.00</p>
-                            </div>
-                            <div class="stats-list">
-                                <div class="stat-item spent"><p class="stat-label">Spent</p><p class="stat-value" id="spentAmount">₱0.00</p></div>
-                                <div class="stat-item remaining"><p class="stat-label">Remaining</p><p class="stat-value" id="remainingAmount">₱0.00</p></div>
-                                <div class="stat-item days"><p class="stat-label">Days Logged</p><p class="stat-value" id="daysLogged">0/7</p></div>
-                            </div>
-                            <div class="progress-section">
-                                <div class="progress-info"><span>Progress</span><span id="percentUsed">0%</span></div>
-                                <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
-                            </div>
-                            <div id="warningMessage" class="warning-box hidden"><p>⚠️ Over budget!</p></div>
-                        </div>
+                {selDay && (
+                  <div id="expenseInputs" className="expense-inputs">
+                    <p className="selected-day-text">Adding for <span id="selectedDayText">{selDay}</span></p>
+                    <div className="expense-grid">
+                      <div className="input-group">
+                        <label>🚗 Fare</label>
+                        <input type="number" id="fareInput" placeholder="0" min="0" step="0.01"
+                          value={fare} onChange={e => setFare(e.target.value)} />
+                      </div>
+                      <div className="input-group">
+                        <label>🍔 Food</label>
+                        <input type="number" id="foodInput" placeholder="0" min="0" step="0.01"
+                          value={food} onChange={e => setFood(e.target.value)} />
+                      </div>
+                      <div className="input-group">
+                        <label>🛍️ Other</label>
+                        <input type="number" id="otherInput" placeholder="0" min="0" step="0.01"
+                          value={other} onChange={e => setOther(e.target.value)} />
+                      </div>
                     </div>
+                    <button id="addExpenseBtn" className="btn btn-primary" onClick={addExpense}>Add ✓</button>
+                  </div>
+                )}
+              </div>
 
-                    <!-- Main Content -->
-                    <div class="main-content">
-                        <div class="card">
-                            <h3 class="card-title">➕ Add Daily Expenses</h3>
-                            <p class="input-label">Select Day</p>
-                            <div class="day-buttons" id="dayButtons">
-                                <button class="day-btn" data-day="Sunday">Sun</button>
-                                <button class="day-btn" data-day="Monday">Mon</button>
-                                <button class="day-btn" data-day="Tuesday">Tue</button>
-                                <button class="day-btn" data-day="Wednesday">Wed</button>
-                                <button class="day-btn" data-day="Thursday">Thu</button>
-                                <button class="day-btn" data-day="Friday">Fri</button>
-                                <button class="day-btn" data-day="Saturday">Sat</button>
+              {expenseRows.length > 0 && (
+                <div id="summaryCard" className="card">
+                  <h3 className="card-title">📋 Weekly Summary</h3>
+                  <div id="expenseList" className="expense-list">
+                    {expenseRows.map(({ day, e, isToday }) => (
+                      e ? (
+                        <div key={day} className="expense-item">
+                          <div className="expense-item-header">
+                            <span className="expense-item-day">{day}{isToday ? ' (Today)' : ''}</span>
+                            <div className="expense-item-actions">
+                              <span className="expense-item-total">₱{e.total.toFixed(2)}</span>
+                              <button className="delete-btn" onClick={() => deleteExpense(day)}>✕</button>
                             </div>
-                            <div id="expenseInputs" class="expense-inputs hidden">
-                                <p class="selected-day-text">Adding for <span id="selectedDayText"></span></p>
-                                <div class="expense-grid">
-                                    <div class="input-group"><label>🚗 Fare</label><input type="number" id="fareInput" placeholder="0" min="0" step="0.01"></div>
-                                    <div class="input-group"><label>🍔 Food</label><input type="number" id="foodInput" placeholder="0" min="0" step="0.01"></div>
-                                    <div class="input-group"><label>🛍️ Other</label><input type="number" id="otherInput" placeholder="0" min="0" step="0.01"></div>
-                                </div>
-                                <button id="addExpenseBtn" class="btn btn-primary">Add ✓</button>
-                            </div>
+                          </div>
+                          <div className="expense-breakdown">
+                            {e.fare > 0  && <span className="breakdown-tag">Fare: ₱{e.fare.toFixed(2)}</span>}
+                            {e.food > 0  && <span className="breakdown-tag">Food: ₱{e.food.toFixed(2)}</span>}
+                            {e.other > 0 && <span className="breakdown-tag">Other: ₱{e.other.toFixed(2)}</span>}
+                          </div>
                         </div>
-
-                        <div id="summaryCard" class="card hidden">
-                            <h3 class="card-title">📋 Weekly Summary</h3>
-                            <div id="expenseList" class="expense-list"></div>
-                            <div class="summary-totals">
-                                <div class="total-row"><span>Total Fare:</span><span id="totalFare">₱0.00</span></div>
-                                <div class="total-row"><span>Total Food:</span><span id="totalFood">₱0.00</span></div>
-                                <div class="total-row"><span>Total Other:</span><span id="totalOther">₱0.00</span></div>
-                                <div class="total-row grand"><span>Total:</span><span id="grandTotal">₱0.00</span></div>
-                            </div>
+                      ) : (
+                        <div key={day} className="expense-item no-expense-day">
+                          <span className="expense-item-day">{day}</span>
+                          <span className="expense-item-no-expense">No expenses</span>
                         </div>
-                    </div>
+                      )
+                    ))}
+                  </div>
+                  <div className="summary-totals">
+                    <div className="total-row"><span>Total Fare:</span><span id="totalFare">₱{totals.fare.toFixed(2)}</span></div>
+                    <div className="total-row"><span>Total Food:</span><span id="totalFood">₱{totals.food.toFixed(2)}</span></div>
+                    <div className="total-row"><span>Total Other:</span><span id="totalOther">₱{totals.other.toFixed(2)}</span></div>
+                    <div className="total-row grand"><span>Total:</span><span id="grandTotal">₱{totals.spent.toFixed(2)}</span></div>
+                  </div>
                 </div>
+              )}
             </div>
+          </div>
         </div>
+      );
+    }
 
-        <!-- Monthly Tab -->
-        <div id="monthlyTab" class="tab-content">
-            <div class="card">
-                <div class="monthly-header">
-                    <h2>Monthly Summary</h2>
-                    <div class="monthly-actions">
-                        <div class="month-selector">
-                            <button id="prevMonth" class="month-nav-btn">◀</button>
-                            <span id="currentMonth" class="current-month"></span>
-                            <button id="nextMonth" class="month-nav-btn">▶</button>
-                        </div>
-                        <button class="btn-export" onclick="exportMonthlyPDF()">📄 PDF</button>
-                    </div>
-                </div>
+    function MonthlyTab({ initMonth, initYear }) {
+      const [month, setMonth] = useState(initMonth);
+      const [year, setYear] = useState(initYear);
+      const [data, setData] = useState(null);
 
-                <div class="monthly-stats">
-                    <div class="monthly-stat-card blue"><p class="monthly-stat-label">Total Allowance</p><p class="monthly-stat-value" id="monthlyAllowance">₱0.00</p></div>
-                    <div class="monthly-stat-card orange"><p class="monthly-stat-label">Total Spent</p><p class="monthly-stat-value" id="monthlySpent">₱0.00</p></div>
-                    <div class="monthly-stat-card green"><p class="monthly-stat-label">Total Saved</p><p class="monthly-stat-value" id="monthlySaved">₱0.00</p></div>
-                </div>
+      const load = useCallback(async () => {
+        try {
+          const r = await fetch(`/api/monthly-summary?month=${month}&year=${year}`);
+          const d = await r.json();
+          setData(d);
+        } catch {}
+      }, [month, year]);
 
-                <div class="monthly-content">
-                    <div class="breakdown-section">
-                        <h3>Expense Breakdown</h3>
-                        <div class="breakdown-list">
-                            <div class="breakdown-item"><span>🚗 Fare</span><span id="monthlyFare">₱0.00</span></div>
-                            <div class="breakdown-item"><span>🍔 Food</span><span id="monthlyFood">₱0.00</span></div>
-                            <div class="breakdown-item"><span>🛍️ Other</span><span id="monthlyOther">₱0.00</span></div>
-                        </div>
-                    </div>
-                    <div class="weekly-section">
-                        <h3>Weekly Breakdown</h3>
-                        <div id="weeklyList" class="weekly-list"></div>
-                    </div>
+      useEffect(() => { load(); }, [load]);
+
+      const prev = () => {
+        if (month === 1) { setMonth(12); setYear(y => y - 1); }
+        else setMonth(m => m - 1);
+      };
+
+      const next = () => {
+        if (month === 12) { setMonth(1); setYear(y => y + 1); }
+        else setMonth(m => m + 1);
+      };
+
+      return (
+        <div id="monthlyTab" className="tab-content active">
+          <div className="card">
+            <div className="monthly-header">
+              <h2>Monthly Summary</h2>
+              <div className="monthly-actions">
+                <div className="month-selector">
+                  <button id="prevMonth" className="month-nav-btn" onClick={prev}>◀</button>
+                  <span id="currentMonth" className="current-month">{data?.month_name || '...'}</span>
+                  <button id="nextMonth" className="month-nav-btn" onClick={next}>▶</button>
                 </div>
-                <div id="noMonthlyData" class="no-data hidden"><p>No data for this month.</p></div>
+                <button className="btn-export" onClick={() => window.location.href = `/api/export-monthly-pdf?month=${month}&year=${year}`}>
+                  📄 PDF
+                </button>
+              </div>
             </div>
+
+            {!data || data.num_weeks === 0 ? (
+              <div id="noMonthlyData" className="no-data">
+                <p>No data for this month.</p>
+              </div>
+            ) : (
+              <>
+                <div className="monthly-stats">
+                  <div className="monthly-stat-card blue">
+                    <p className="monthly-stat-label">Total Allowance</p>
+                    <p className="monthly-stat-value" id="monthlyAllowance">₱{data.total_allowance.toFixed(2)}</p>
+                  </div>
+                  <div className="monthly-stat-card orange">
+                    <p className="monthly-stat-label">Total Spent</p>
+                    <p className="monthly-stat-value" id="monthlySpent">₱{data.total_spent.toFixed(2)}</p>
+                  </div>
+                  <div className={`monthly-stat-card ${data.total_saved < 0 ? 'red' : 'green'}`} style={data.total_saved < 0 ? {background:'rgba(239,68,68,0.2)',border:'1px solid rgba(239,68,68,0.4)'} : {}}>
+                    <p className="monthly-stat-label">Total Saved</p>
+                    <p className={`monthly-stat-value ${data.total_saved < 0 ? 'negative' : ''}`} id="monthlySaved">₱{data.total_saved.toFixed(2)}</p>
+                  </div>
+                </div>
+
+                <div className="monthly-content">
+                  <div className="breakdown-section">
+                    <h3>Expense Breakdown</h3>
+                    <div className="breakdown-list">
+                      <div className="breakdown-item"><span>🚗 Fare</span><span id="monthlyFare">₱{data.breakdown.fare.toFixed(2)}</span></div>
+                      <div className="breakdown-item"><span>🍔 Food</span><span id="monthlyFood">₱{data.breakdown.food.toFixed(2)}</span></div>
+                      <div className="breakdown-item"><span>🛍️ Other</span><span id="monthlyOther">₱{data.breakdown.other.toFixed(2)}</span></div>
+                    </div>
+                  </div>
+                  <div className="weekly-section">
+                    <h3>Weekly Breakdown</h3>
+                    <div id="weeklyList" className="weekly-list">
+                      {data.weeks.map((w, i) => {
+                        const date = new Date(w.week_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                        return (
+                          <div key={i} className="week-item">
+                            <div className="week-header">
+                              <h4>Week {i + 1}</h4>
+                              <span className="week-date">{date}</span>
+                            </div>
+                            <div className="week-stats">
+                              <div className="week-stat">
+                                <span className="week-stat-label">Allowance</span>
+                                <span className="week-stat-value">₱{w.allowance.toFixed(2)}</span>
+                              </div>
+                              <div className="week-stat">
+                                <span className="week-stat-label">Spent</span>
+                                <span className="week-stat-value">₱{w.spent.toFixed(2)}</span>
+                              </div>
+                              <div className={`week-stat ${w.saved >= 0 ? 'positive' : 'negative'}`}>
+                                <span className="week-stat-label">Saved</span>
+                                <span className="week-stat-value">₱{w.saved.toFixed(2)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
-    </div>
-    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+      );
+    }
+
+    function App() {
+      const now = new Date();
+      const [tab, setTab] = useState('weekly');
+      const [screen, setScreen] = useState('setup');
+      const [username, setUsername] = useState('');
+      const [darkMode, setDarkMode] = useState(localStorage.getItem('darkMode') !== 'false');
+      const [menuOpen, setMenuOpen] = useState(false);
+      const [weekInfo, setWeekInfo] = useState(null);
+      const [allowance, setAllowance] = useState(0);
+      const [expenses, setExpenses] = useState({});
+      const [totals, setTotals] = useState({ fare: 0, food: 0, other: 0, spent: 0, remaining: 0 });
+
+      useEffect(() => {
+        document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+      }, [darkMode]);
+
+      const toggleTheme = () => {
+        const next = !darkMode;
+        setDarkMode(next);
+        localStorage.setItem('darkMode', next);
+      };
+
+      const logout = async () => {
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.href = '/';
+      };
+
+      const refreshBudget = useCallback(async () => {
+        try {
+          const r = await fetch('/api/get-budget');
+          const d = await r.json();
+          if (d.allowance > 0) {
+            setAllowance(d.allowance);
+            setExpenses(d.expenses || {});
+            setTotals(d.totals);
+            setScreen('tracker');
+          }
+        } catch {}
+      }, []);
+
+      useEffect(() => {
+        fetch('/api/check-auth').then(r => r.json()).then(d => {
+          if (!d.authenticated) { window.location.href = '/'; return; }
+          setUsername(d.username);
+          document.getElementById('userGreeting').textContent = `Hi, ${d.username}!`;
+        }).catch(() => window.location.href = '/');
+
+        fetch('/api/current-week-info').then(r => r.json()).then(setWeekInfo).catch(() => {});
+        refreshBudget();
+      }, []);
+
+      const handleStart = (n) => {
+        setAllowance(n);
+        setScreen('tracker');
+        refreshBudget();
+      };
+
+      return (
+        <>
+          <MobileMenu
+            open={menuOpen} onClose={() => setMenuOpen(false)}
+            darkMode={darkMode} onTheme={toggleTheme}
+            showExport={screen === 'tracker'}
+            onExport={() => window.location.href = '/api/export-pdf'}
+            onLogout={logout}
+            currentMonth={now.getMonth() + 1} currentYear={now.getFullYear()}
+          />
+
+          <div className="header">
+            <div className="header-left">
+              <div>
+                <h1>Budget Tracker</h1>
+                <p className="header-subtitle">Master your finances with style</p>
+              </div>
+            </div>
+            <div className="header-actions">
+              <span id="userGreeting" className="user-greeting desktop-only"></span>
+              <button id="mobileMenuBtn" className="mobile-menu-btn" onClick={() => setMenuOpen(true)}>☰</button>
+              <button id="themeToggle" className="btn-theme" onClick={toggleTheme}>{darkMode ? '☀️' : '🌙'}</button>
+              {screen === 'tracker' && (
+                <button id="exportBtn" className="btn-export" onClick={() => window.location.href = '/api/export-pdf'}>Export PDF</button>
+              )}
+              <button id="logoutBtn" className="btn-logout" onClick={logout}>Logout</button>
+            </div>
+          </div>
+
+          <div className="nav-tabs">
+            <button className={`nav-tab ${tab === 'weekly' ? 'active' : ''}`} onClick={() => setTab('weekly')}>📅 Weekly Budget</button>
+            <button className={`nav-tab ${tab === 'monthly' ? 'active' : ''}`} onClick={() => setTab('monthly')}>📊 Monthly Summary</button>
+          </div>
+
+          {tab === 'weekly' && (
+            <div id="weeklyTab" className="tab-content active">
+              {screen === 'setup'
+                ? <SetupScreen weekInfo={weekInfo} onStart={handleStart} />
+                : <WeeklyTracker
+                    weekInfo={weekInfo} allowance={allowance}
+                    expenses={expenses} totals={totals} onRefresh={refreshBudget}
+                  />}
+            </div>
+          )}
+
+          {tab === 'monthly' && (
+            <MonthlyTab initMonth={now.getMonth() + 1} initYear={now.getFullYear()} />
+          )}
+        </>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+  {% endraw %}
 </body>
 </html>
