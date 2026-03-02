@@ -41,14 +41,14 @@ DAYS_MAP = {
 #  PDF BUILDING BLOCKS
 # ═══════════════════════════════════════════════════════════════════
 
-def _ps(name, font="Helvetica", size=9, color=TEXT_WHITE, align=TA_LEFT):
+def _ps(name, font="Helvetica", size=12, color=TEXT_WHITE, align=TA_LEFT):
     """Quick ParagraphStyle factory."""
     return ParagraphStyle(name, fontName=font, fontSize=size,
                           textColor=color, alignment=align,
                           leading=size * 1.35)
 
 
-def _p(text, font="Helvetica", size=9, color=TEXT_WHITE, align=TA_LEFT):
+def _p(text, font="Helvetica", size=12, color=TEXT_WHITE, align=TA_LEFT):
     return Paragraph(text, _ps("_", font, size, color, align))
 
 
@@ -114,8 +114,8 @@ def _stat_card(label, value, accent, w=1.65 * inch, h=0.70 * inch):
     d = Drawing(w, h)
     d.add(Rect(0, 0,     w,  h, fillColor=BG_CARD,  strokeColor=accent, strokeWidth=1))
     d.add(Rect(0, h - 3, w,  3, fillColor=accent,   strokeColor=None))
-    d.add(String(8, h - 17, label, fillColor=TEXT_MUTED, fontSize=7,  fontName="Helvetica"))
-    d.add(String(8,      10, value, fillColor=accent,     fontSize=11, fontName="Helvetica-Bold"))
+    d.add(String(8, h - 17, label, fillColor=TEXT_MUTED, fontSize=12,  fontName="Helvetica"))
+    d.add(String(8,      10, value, fillColor=accent,     fontSize=12, fontName="Helvetica-Bold"))
     return d
 
 
@@ -126,7 +126,7 @@ def _bar_chart(labels, values, bar_colors, width=420, height=108):
                strokeColor=PURPLE_BORDER, strokeWidth=0.8))
     if not values or max(values) == 0:
         d.add(String(width / 2, height / 2, "No expense data",
-                     fillColor=TEXT_MUTED, fontSize=9, textAnchor="middle"))
+                     fillColor=TEXT_MUTED, fontSize=12, textAnchor="middle"))
         return d
     max_v = max(values)
     n     = len(values)
@@ -144,9 +144,9 @@ def _bar_chart(labels, values, bar_colors, width=420, height=108):
         if val > 0:
             d.add(String(x + bw / 2, y + bh + 3,
                          f"{val:,.0f}",
-                         fillColor=TEXT_WHITE, fontSize=6, textAnchor="middle"))
+                         fillColor=TEXT_WHITE, fontSize=10, textAnchor="middle"))
         d.add(String(x + bw / 2, y - 14, label,
-                     fillColor=TEXT_LIGHT, fontSize=6, textAnchor="middle"))
+                     fillColor=TEXT_LIGHT, fontSize=10, textAnchor="middle"))
     return d
 
 
