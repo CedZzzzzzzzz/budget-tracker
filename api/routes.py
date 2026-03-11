@@ -8,38 +8,78 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_LEFT, TA_RIGHT
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.graphics.shapes import Drawing, Rect, String
 from functools import wraps
+import google.generativeai as genai
+import os
+
+font_path = os.path.join(os.path.dirname(__file__), "..", "static", "fonts", "DejaVuSans.ttf")
+pdfmetrics.registerFont(TTFont("DejaVuSans", font_path))
 
 api = Blueprint("api", __name__, url_prefix="/api")
 
-# ═══════════════════════════════════════════════════════════════════
-#  COLOR PALETTE  —  matches the Budget Tracker app UI
-# ═══════════════════════════════════════════════════════════════════
-BG_DEEP      = colors.HexColor("#0D0720")   # darkest background
-BG_CARD      = colors.HexColor("#1A0D35")   # card / panel bg
-BG_ROW_ALT   = colors.HexColor("#160B2E")   # alternate row tint
-PURPLE_BORDER= colors.HexColor("#3D1A6E")   # border / grid lines
-PURPLE_MAIN  = colors.HexColor("#8B5CF6")   # primary purple accent
-PURPLE_LIGHT = colors.HexColor("#A78BFA")   # lavender — headings
-TEXT_WHITE   = colors.HexColor("#FFFFFF")
-TEXT_LIGHT   = colors.HexColor("#C4B5FD")   # soft lavender body text
-TEXT_MUTED   = colors.HexColor("#7C6FAD")   # muted helper text
-GOLD         = colors.HexColor("#F59E0B")   # totals / days-logged
-PINK         = colors.HexColor("#EC4899")   # spent accent
-GREEN        = colors.HexColor("#10B981")   # remaining accent
+prompt = """You are a financial assistant that provides insights and recommendations based on the user's budget weekly data.
+            Give exactly 3 lines, a short paragraph/analysis.
+            Maximum of 80 characters.
+            Return only the 3 lines, no bullet points, no numbering, only follow the instruction stated above.
+            Mention the username.
+            Always use'&#8369;' when mentioning amounts.
+            You may use this as reference for the data structure:
+            - Username : {username}
+            - Allowance : &#8369;{allowance:.2f}
+            - Total Fare : &#8369;{fare:.2f}
+            - Total Food : &#8369;{food:.2f}  
+            - Total Other : &#8369;{other:.2f}
+            - Total Spent : &#8369;{spent:.2f}
+            - Remaining : &#8369;{remaining:.2f}
+        """
+def generate_budget_insights(allowance, totals, period="week"):
+    try:
+        notes = prompt.format(
+            username=session.get("username"),
+            allowance = allowance,
+            fare = totals['fare'],
+            food = totals['food'],
+            other = totals['other'],
+            spent = totals['spent'],
+            remaining = totals['remaining'],
+        )
+        genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+        model = genai.GenerativeModel("gemini-2.5-flash-lite")
 
-PAGE_W, PAGE_H = landscape(letter)          # 792 × 612 pts
+        response = model.generate_content(notes)
+        lines = [line.strip().replace("₱", "&#8369;") for line in response.text.strip().split("\n") if line.strip()]
+        return lines[:3]
+    except Exception:
+        return [
+            "Review your spending habits to identify areas for improvement.",
+            "Consider setting aside a portion of your remaining budget for savings.",
+            "Track your expenses daily to stay within your allowance and avoid overspending.",
+        ]
+
+BG_DEEP       = colors.HexColor("#03071a")   
+BG_CARD       = colors.HexColor("#0a1240")   
+BG_ROW_ALT    = colors.HexColor("#060d2e")   
+PURPLE_BORDER = colors.HexColor("#1a3a80")   
+PURPLE_MAIN   = colors.HexColor("#1e6bff")   
+PURPLE_LIGHT  = colors.HexColor("#448aff")   
+TEXT_WHITE    = colors.HexColor("#e8eeff")   
+TEXT_LIGHT    = colors.HexColor("#9eb3d8")   
+TEXT_MUTED    = colors.HexColor("#4a6080")   
+GOLD          = colors.HexColor("#ffab00")   
+PINK          = colors.HexColor("#e8001d")   
+GREEN         = colors.HexColor("#00e5a0")   
+
+PAGE_W, PAGE_H = landscape(letter)         
 MARGIN = 0.42 * inch
 DAYS_MAP = {
     "Sunday": 0, "Monday": 1, "Tuesday": 2, "Wednesday": 3,
     "Thursday": 4, "Friday": 5, "Saturday": 6,
 }
 
-
-# ═══════════════════════════════════════════════════════════════════
 #  PDF BUILDING BLOCKS
-# ═══════════════════════════════════════════════════════════════════
 
 def _ps(name, font="Helvetica", size=12, color=TEXT_WHITE, align=TA_LEFT):
     """Quick ParagraphStyle factory."""
@@ -152,7 +192,7 @@ def _bar_chart(labels, values, bar_colors, width=420, height=108):
 
 def _note_box(text, w=1.5 * inch, h=0.70 * inch):
     return Table(
-        [[_p(text, "Helvetica", 7, TEXT_LIGHT)]],
+        [[_p(text, "DejaVuSans", 7, TEXT_LIGHT)]],
         colWidths=[w], rowHeights=[h],
         style=[
             ("BACKGROUND", (0, 0), (0, 0), BG_CARD),
@@ -178,16 +218,16 @@ def _stack(*items):
 
 
 def _draw_bg(canv, doc):
-    """Dark purple page background with soft glow orbs."""
+    """Dark blue page background with soft glow orbs."""
     canv.saveState()
     # solid dark fill
     canv.setFillColor(BG_DEEP)
     canv.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
-    # top-left purple glow
+    # top-left glow
     for radius, alpha in [(200, 0.04), (130, 0.07), (70, 0.11)]:
         canv.setFillColorRGB(0.54, 0.36, 0.96, alpha=alpha)
         canv.circle(PAGE_W * 0.14, PAGE_H * 0.86, radius, fill=1, stroke=0)
-    # bottom-right pink glow
+    # bottom-right glow
     for radius, alpha in [(160, 0.03), (90, 0.05)]:
         canv.setFillColorRGB(0.93, 0.32, 0.60, alpha=alpha)
         canv.circle(PAGE_W * 0.87, PAGE_H * 0.14, radius, fill=1, stroke=0)
@@ -245,10 +285,7 @@ def _stat_cards_row(*cards):
     ]))
     return ct
 
-
-# ═══════════════════════════════════════════════════════════════════
 #  AUTH HELPERS
-# ═══════════════════════════════════════════════════════════════════
 
 def validate_password(password):
     if len(password) < 8:
@@ -285,10 +322,7 @@ def get_current_day():
     return ["Monday", "Tuesday", "Wednesday", "Thursday",
             "Friday", "Saturday", "Sunday"][datetime.now().weekday()]
 
-
-# ═══════════════════════════════════════════════════════════════════
 #  AUTH ROUTES
-# ═══════════════════════════════════════════════════════════════════
 
 @api.route("/register", methods=["POST"])
 def register():
@@ -354,10 +388,7 @@ def check_auth():
         return jsonify({"authenticated": True, "username": session.get("username")})
     return jsonify({"authenticated": False})
 
-
-# ═══════════════════════════════════════════════════════════════════
 #  BUDGET ROUTES
-# ═══════════════════════════════════════════════════════════════════
 
 @api.route("/current-week-info", methods=["GET"])
 @login_required
@@ -519,9 +550,7 @@ def monthly_summary():
         return jsonify({"error": str(e)}), 500
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  PDF EXPORT — WEEKLY  (landscape, purple dark theme)
-# ═══════════════════════════════════════════════════════════════════
+#  PDF EXPORT — WEEKLY  
 
 @api.route("/export-pdf", methods=["GET"])
 @login_required
@@ -628,11 +657,14 @@ def export_pdf():
             [PURPLE_MAIN, GOLD, PINK],
             width=chart_w, height=108,
         )
+        
+        totals = {"fare": t_fare, "food": t_food, "other": t_other, "spent" : t_spent, "remaining": remaining}
+        ai_notes = generate_budget_insights(budget["allowance"], totals, period="week")
         nw = rw * 0.30
         note_row = Table(
-            [[_note_box("Review subscriptions\nfor unused services.", w=nw),
-              _note_box("Track daily spending\nto stay within budget.", w=nw),
-              _note_box("Set weekly check-in\nevery Sunday night.", w=nw)]],
+            [[_note_box(ai_notes[0], w=nw),
+              _note_box(ai_notes[1], w=nw),
+              _note_box(ai_notes[2], w=nw)]],
             colWidths=[rw * 0.32] * 3,
         )
         note_row.setStyle(TableStyle([
@@ -655,14 +687,12 @@ def export_pdf():
         elements.append(bottom)
 
         return _pdf_resp(_build(elements), f"budget_{week_start}-{week_end}.pdf")
+    
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-# ═══════════════════════════════════════════════════════════════════
-#  PDF EXPORT — MONTHLY  (landscape, purple dark theme)
-# ═══════════════════════════════════════════════════════════════════
+#  PDF EXPORT — MONTHLY  
 
 @api.route("/export-monthly-pdf", methods=["GET"])
 @login_required
@@ -762,11 +792,14 @@ def export_monthly_pdf():
             [PURPLE_MAIN, GOLD, PINK],
             width=chart_w, height=108,
         )
+
+        totals = {"fare": t_fare, "food": t_food, "other": t_other, "spent" : t_spent, "remaining": t_saved}
+        ai_notes = generate_budget_insights(t_allow, totals, period="month")
         nw = rw * 0.30
         note_row = Table(
-            [[_note_box("Review subscriptions\nfor unused services.", w=nw),
-              _note_box("Track daily spending\nto stay within budget.", w=nw),
-              _note_box("Set weekly check-in\nevery Sunday night.", w=nw)]],
+            [[_note_box(ai_notes[0], w=nw),
+              _note_box(ai_notes[1], w=nw),
+              _note_box(ai_notes[2], w=nw)]],
             colWidths=[rw * 0.32] * 3,
         )
         note_row.setStyle(TableStyle([
@@ -789,6 +822,8 @@ def export_monthly_pdf():
         elements.append(bottom)
 
         return _pdf_resp(_build(elements), f"{year}_{month}.pdf")
-
+    
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+    
