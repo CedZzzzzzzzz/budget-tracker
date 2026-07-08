@@ -107,7 +107,7 @@ pip install -r requirements.txt
 
 Create `.env` file:
 ```env
-DATABASE_URL=postgresql://postgres:your_password@localhost:5432/budget_tracker
+DATABASE_URL=postgresql://postgres:your_password@localhost:5000/budget_tracker
 FLASK_ENV=development
 SECRET_KEY=your-secret-key-here
 ```
