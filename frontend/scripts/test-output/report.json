@@ -1,0 +1,47 @@
+{
+  "testedAt": "2026-07-07T06:16:26.740Z",
+  "results": [
+    {
+      "status": "PASS",
+      "name": "Initial login",
+      "detail": "welcome on right, sign in visible"
+    },
+    {
+      "status": "PASS",
+      "name": "Overlay starts on right",
+      "detail": "translateX=449px"
+    },
+    {
+      "status": "PASS",
+      "name": "Overlay mid-slide",
+      "detail": "translateX=272px (between 0 and 449)"
+    },
+    {
+      "status": "PASS",
+      "name": "After signup",
+      "detail": "welcome on left, sign up visible"
+    },
+    {
+      "status": "PASS",
+      "name": "Overlay ended on left",
+      "detail": "translateX=0px"
+    },
+    {
+      "status": "PASS",
+      "name": "Overlay mid-slide back",
+      "detail": "translateX=208px"
+    },
+    {
+      "status": "PASS",
+      "name": "After signin",
+      "detail": "back to sign in, welcome on right"
+    }
+  ],
+  "screenshots": [
+    "01-initial-login.png",
+    "02-mid-slide.png",
+    "03-after-signup.png",
+    "04-mid-slide-back.png",
+    "05-after-signin.png"
+  ]
+}

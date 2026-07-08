@@ -1,4 +1,3 @@
-# Database - Don't commit personal data
 *.db
 budget_tracker.db
 
@@ -28,3 +27,17 @@ Thumbs.db
 # Environment
 .env
 .flaskenv
+
+# Node
+node_modules/
+frontend/dist/
+
+# Documents
+/docs
+optimization.md
+features.md
+
+# agent
+.agents/
+agent-skills/
+.neon

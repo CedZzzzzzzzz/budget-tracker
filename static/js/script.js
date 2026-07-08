@@ -1,5 +1,4 @@
 
-// DOM Elements
 const setupScreen = document.getElementById('setupScreen');
 const trackerScreen = document.getElementById('trackerScreen');
 const allowanceInput = document.getElementById('allowanceInput');
@@ -26,7 +25,6 @@ const totalOther = document.getElementById('totalOther');
 const grandTotal = document.getElementById('grandTotal');
 const exportBtn = document.getElementById('exportBtn');
 
-// Tab Navigation
 document.querySelectorAll('.nav-tab').forEach(tab => {
     tab.addEventListener('click', () => {
         document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
@@ -41,14 +39,12 @@ async function checkAuth() {
     try {
         const res = await fetch('/api/check-auth');
         const data = await res.json();
-        
+
         if (!data.authenticated) {
-            // Not logged in, redirect to login page
             window.location.href = '/';
             return false;
         }
-        
-        // Update user greeting
+
         const username = data.username;
         document.getElementById('userGreeting').textContent = `Hi, ${username}!`;
         return true;
@@ -59,7 +55,6 @@ async function checkAuth() {
     }
 }
 
-// Logout function
 async function handleLogout() {
     try {
         const res = await fetch('/api/logout', { method: 'POST' });
@@ -75,17 +70,14 @@ async function handleLogout() {
 }
 
 
-// --- SAFE EVENT LISTENERS ---
 const attachListener = (id, event, fn) => {
     const el = document.getElementById(id);
     if (el) el.addEventListener(event, fn);
 };
 
-// --- ATTACH & NAV LISTENERS ---
 attachListener('logoutBtn', 'click', handleLogout);
 attachListener('themeToggle', 'click', toggleTheme);
 
-// --- EXPORT BUTTONS ---
 attachListener('exportBtn', 'click', () => {
     window.location.href = '/api/export-pdf';
 });
@@ -93,39 +85,33 @@ attachListener('exportMonthlyBtn', 'click', () => {
     window.location.href = `/api/export-monthly-pdf?month=${currentMonth}&year=${currentYear}`;
 });
 
-// --- MONTH NAVIGATION ---
-attachListener('prevMonth', 'click', () => { 
-    currentMonth--; 
-    if (currentMonth < 1) { currentMonth = 12; currentYear--; } 
-    loadMonthlySummary(); 
+attachListener('prevMonth', 'click', () => {
+    currentMonth--;
+    if (currentMonth < 1) { currentMonth = 12; currentYear--; }
+    loadMonthlySummary();
 });
-attachListener('nextMonth', 'click', () => { 
-    currentMonth++; 
-    if (currentMonth > 12) { currentMonth = 1; currentYear++; } 
-    loadMonthlySummary(); 
+attachListener('nextMonth', 'click', () => {
+    currentMonth++;
+    if (currentMonth > 12) { currentMonth = 1; currentYear++; }
+    loadMonthlySummary();
 });
 
-// --- DAY BUTTONS ---
 dayButtons.forEach(btn => btn.addEventListener('click', () => selectDay(btn.dataset.day)));
 
-// --- BUDGET TRACKING LISTENERS ---
 attachListener('startBtn', 'click', startTracking);
 attachListener('addExpenseBtn', 'click', addExpense);
 
-// --- ALLOWANCE INPUT KEY ---
 const allowanceInputEl = document.getElementById('allowanceInput');
 if (allowanceInputEl) {
-    allowanceInputEl.addEventListener('keypress', (e) => { 
-        if (e.key === 'Enter') startTracking(); 
+    allowanceInputEl.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') startTracking();
     });
 }
 
-// State
 let allowance = 0, expenses = {}, selectedDay = '', weekInfo = null;
 let currentMonth = new Date().getMonth() + 1, currentYear = new Date().getFullYear();
 let darkMode = localStorage.getItem('darkMode') !== 'false';
 
-// Dark Mode & Light Mode
 function applyTheme(isDark) {
     document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
     const btn = document.getElementById('themeToggle');
@@ -133,18 +119,15 @@ function applyTheme(isDark) {
 }
 applyTheme(darkMode);
 
-// Theme Toggle
 function toggleTheme() {
     darkMode = !darkMode;
     localStorage.setItem('darkMode', darkMode);
     applyTheme(darkMode);
 }
 
-// PDF Export
 function exportWeeklyPDF() { window.location.href = '/api/export-pdf'; }
 function exportMonthlyPDF() { window.location.href = `/api/export-monthly-pdf?month=${currentMonth}&year=${currentYear}`; }
 
-// Week Info
 async function loadWeekInfo() {
     try {
         const res = await fetch('/api/current-week-info');
@@ -159,11 +142,10 @@ async function loadWeekInfo() {
     } catch (e) { console.error(e); }
 }
 
-// Start Tracking
 async function startTracking() {
     const value = parseFloat(allowanceInput.value);
     if (!value || value <= 0) return alert('Enter valid allowance');
-    
+
     try {
         const res = await fetch('/api/set-allowance', {
             method: 'POST',
@@ -181,7 +163,6 @@ async function startTracking() {
     } catch (e) { alert('Server error'); }
 }
 
-// Select Day
 function selectDay(day) {
     if (expenses[day]) return;
     selectedDay = day;
@@ -191,14 +172,13 @@ function selectDay(day) {
     fareInput.value = foodInput.value = otherInput.value = '';
 }
 
-// Add Expense
 async function addExpense() {
     if (!selectedDay) return;
     const fare = parseFloat(fareInput.value) || 0;
     const food = parseFloat(foodInput.value) || 0;
     const other = parseFloat(otherInput.value) || 0;
     if (fare === 0 && food === 0 && other === 0) return alert('Enter at least one expense');
-    
+
     try {
         const res = await fetch('/api/add-expense', {
             method: 'POST',
@@ -217,7 +197,6 @@ async function addExpense() {
     } catch (e) { alert('Server error'); }
 }
 
-// Delete Expense
 async function deleteExpense(day) {
     if (!confirm(`Delete ${day}?`)) return;
     try {
@@ -230,7 +209,6 @@ async function deleteExpense(day) {
     } catch (e) { alert('Server error'); }
 }
 
-// Fetch Budget
 async function fetchBudgetData() {
     try {
         const res = await fetch('/api/get-budget');
@@ -245,14 +223,13 @@ async function fetchBudgetData() {
     } catch (e) { console.error(e); }
 }
 
-// Update Display
 function updateDisplay(totals = null) {
     if (!totals) {
         let f = 0, fd = 0, o = 0;
         Object.values(expenses).forEach(e => { f += e.fare; fd += e.food; o += e.other; });
         totals = { fare: f, food: fd, other: o, spent: f + fd + o, remaining: allowance - (f + fd + o) };
     }
-    
+
     spentAmount.textContent = `₱${totals.spent.toFixed(2)}`;
     const pct = (totals.spent / allowance) * 100;
     percentUsed.textContent = `${pct.toFixed(0)}%`;
@@ -268,38 +245,34 @@ function updateDisplay(totals = null) {
     grandTotal.textContent = `₱${totals.spent.toFixed(2)}`;
 }
 
-// Render Expense List
 function renderExpenseList() {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const today = new Date().getDay(); 
-    
-    // Check if any expenses to show or any days have passed
+    const today = new Date().getDay();
+
     const hasAnyExpenses = Object.keys(expenses).length > 0;
-    const hasPastDays = today > 0; 
-    
+    const hasPastDays = today > 0;
+
     if (!hasAnyExpenses && !hasPastDays) {
         summaryCard.classList.add('hidden');
         return;
     }
-    
+
     summaryCard.classList.remove('hidden');
     expenseList.innerHTML = '';
-    
+
     days.forEach((day, index) => {
         const e = expenses[day];
         const hasExpense = !!e;
-        const isPast = index < today; 
+        const isPast = index < today;
         const isToday = index === today;
         const isFuture = index > today;
-        
-        // Show past days (always) and today (only if it has expenses)
+
         if (isFuture || (isToday && !hasExpense)) return;
-        
+
         const item = document.createElement('div');
         item.className = 'expense-item';
-        
+
         if (hasExpense) {
-            // Day with expenses - show breakdown
             item.innerHTML = `
                 <div class="expense-item-header">
                     <span class="expense-item-day">${day}${isToday ? ' (Today)' : ''}</span>
@@ -326,19 +299,17 @@ function renderExpenseList() {
 }
 
 function updateDayButtons() {
-    const today = new Date().getDay(); 
-    
+    const today = new Date().getDay();
+
     dayButtons.forEach(btn => {
         const dayIndex = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].indexOf(btn.dataset.day);
         const isFuture = dayIndex > today;
         const hasExpense = expenses[btn.dataset.day];
-        
-        // Disable if: already has expense OR is a future day
+
         btn.disabled = hasExpense || isFuture;
     });
 }
 
-// Monthly Summary
 async function loadMonthlySummary() {
     try {
         const res = await fetch(`/api/monthly-summary?month=${currentMonth}&year=${currentYear}`);
@@ -366,7 +337,6 @@ async function loadMonthlySummary() {
     } catch (e) { console.error(e); }
 }
 
-// Render Weekly Breakdown
 function renderWeeklyBreakdown(weeks) {
     const weeklyList = document.getElementById('weeklyList');
     weeklyList.innerHTML = '';
@@ -385,53 +355,47 @@ function renderWeeklyBreakdown(weeks) {
     });
 }
 
-// Global functions
 window.deleteExpense = deleteExpense;
 window.toggleTheme = toggleTheme;
 window.exportWeeklyPDF = exportWeeklyPDF;
 window.exportMonthlyPDF = exportMonthlyPDF;
 
-// Init
 window.addEventListener('DOMContentLoaded', async () => {
     console.log('=== PAGE LOAD START ===');
-    
+
     const isAuthenticated = await checkAuth();
     if (!isAuthenticated) {
         console.log('User not authenticated, redirecting to login.');
         return;
     }
     console.log('User authenticated successfully.');
-    // Disable future day buttons immediately
     updateDayButtons();
-    
+
     await loadWeekInfo();
-    
+
     try {
         console.log('Fetching budget from API...');
         const res = await fetch('/api/get-budget');
         console.log('Response status:', res.status);
-        
+
         if (res.ok) {
             const data = await res.json();
             console.log('Data received:', data);
             console.log('Allowance from API:', data.allowance);
-            
-            // Set the data
+
             allowance = data.allowance || 0;
             expenses = data.expenses || {};
-            
+
             console.log('Allowance variable set to:', allowance);
             console.log('Is allowance > 0?', allowance > 0);
-            
-            // Check if budget exists
+
             if (allowance > 0) {
                 console.log('✅ SHOWING TRACKER SCREEN');
                 allowanceDisplay.textContent = `₱${allowance.toFixed(2)}`;
                 setupScreen.classList.remove('active');
                 trackerScreen.classList.add('active');
                 exportBtn.classList.remove('hidden');
-                
-                // Update the display
+
                 updateDisplay(data.totals);
                 renderExpenseList();
                 updateDayButtons();
@@ -447,18 +411,17 @@ window.addEventListener('DOMContentLoaded', async () => {
             trackerScreen.classList.remove('active');
             exportBtn.classList.add('hidden');
         }
-    } catch (e) { 
+    } catch (e) {
         console.log('❌ SHOWING SETUP SCREEN - Error caught:', e);
         setupScreen.classList.add('active');
         trackerScreen.classList.remove('active');
         exportBtn.classList.add('hidden');
     }
-    
+
     console.log('=== PAGE LOAD END ===');
     loadMonthlySummary();
 });
 
-// Mobile Menu Functions
 function toggleMobileMenu() {
     const menu = document.getElementById('mobileMenu');
     const overlay = document.getElementById('mobileOverlay');
@@ -473,10 +436,8 @@ function closeMobileMenu() {
     overlay.classList.remove('active');
 }
 
-// Attach mobile menu button listener
 attachListener('mobileMenuBtn', 'click', toggleMobileMenu);
 
-// Update mobile theme icon when toggling
 const originalToggleTheme = toggleTheme;
 toggleTheme = function() {
     originalToggleTheme();

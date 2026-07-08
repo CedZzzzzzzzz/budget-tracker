@@ -1,32 +1,25 @@
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
 
-/* ============================================================
-   RB22 — RED BULL RACING 2026 COLOR SYSTEM
-   Deep navy base · Electric blue accents · Red highlights
-   ============================================================ */
 
 :root {
-    /* ── RB22 Core Palette ── */
-    --rb-void:          #03071a;        /* darkest – page bg base */
-    --rb-navy:          #060d2e;        /* deep navy */
-    --rb-midnight:      #0a1240;        /* card base */
-    --rb-dusk:          #0e1a56;        /* elevated surface */
-    --rb-electric:      #1565ff;        /* primary blue */
-    --rb-electric-mid:  #2979ff;        /* mid blue */
-    --rb-electric-hi:   #448aff;        /* bright blue */
-    --rb-glow:          #82b1ff;        /* soft glow */
-    --rb-red:           #cc0018;        /* primary red accent */
-    --rb-red-hot:       #ff1a32;        /* bright red */
-    --rb-white:         #e8eeff;        /* off-white text */
-    --rb-silver:        #9eb3d8;        /* secondary text */
-    --rb-muted:         #4a6080;        /* muted text */
+    --rb-void:          #03071a;
+    --rb-navy:          #060d2e;
+    --rb-midnight:      #0a1240;
+    --rb-dusk:          #0e1a56;
+    --rb-electric:      #1565ff;
+    --rb-electric-mid:  #2979ff;
+    --rb-electric-hi:   #448aff;
+    --rb-glow:          #82b1ff;
+    --rb-red:           #cc0018;
+    --rb-red-hot:       #ff1a32;
+    --rb-white:         #e8eeff;
+    --rb-silver:        #9eb3d8;
+    --rb-muted:         #4a6080;
 
-    /* ── Backgrounds ── */
     --bg-primary:       linear-gradient(160deg, #03071a 0%, #060d2e 45%, #080f38 100%);
     --bg-card:          rgba(10, 18, 64, 0.55);
     --border-card:      rgba(21, 101, 255, 0.22);
 
-    /* ── Glass System ── */
     --glass-bg:         rgba(6, 13, 46, 0.45);
     --glass-bg-light:   rgba(10, 18, 64, 0.35);
     --glass-border:     rgba(21, 101, 255, 0.28);
@@ -35,26 +28,21 @@
     --glass-blur:       blur(18px);
     --glass-blur-sm:    blur(10px);
 
-    /* ── Gradients ── */
     --gradient-primary:   linear-gradient(135deg, #1565ff 0%, #2979ff 100%);
     --gradient-secondary: linear-gradient(135deg, #2979ff 0%, #448aff 100%);
     --gradient-blue:      linear-gradient(135deg, #1565ff, #448aff);
     --gradient-red:       linear-gradient(135deg, #cc0018, #ff1a32);
     --gradient-title:     linear-gradient(135deg, #e8eeff 0%, #448aff 60%, #82b1ff 100%);
 
-    /* ── Text Colors ── */
     --text-primary:     #e8eeff;
     --text-secondary:   #9eb3d8;
 
-    /* ── Inputs ── */
     --input-bg:         rgba(21, 101, 255, 0.07);
     --input-border:     rgba(21, 101, 255, 0.25);
     --input-focus:      rgba(21, 101, 255, 0.18);
 
-    /* ── Stat Cards ── */
     --stat-bg:          rgba(21, 101, 255, 0.06);
 
-    /* ── Shadows ── */
     --shadow-blue-sm:   0 2px 10px rgba(21, 101, 255, 0.35);
     --shadow-blue-md:   0 4px 20px rgba(21, 101, 255, 0.45);
     --shadow-blue-lg:   0 8px 30px rgba(21, 101, 255, 0.55);
@@ -62,13 +50,11 @@
     --shadow-red:       0 4px 20px rgba(204, 0, 24, 0.45);
     --shadow-card:      0 8px 32px rgba(3, 7, 26, 0.7), 0 0 0 1px rgba(21, 101, 255, 0.15);
 
-    /* ── Status Colors ── */
     --color-success:    #00e5a0;
     --color-warning:    #ffab00;
     --color-danger:     #ff1a32;
     --color-info:       #448aff;
 
-    /* ── Purple Aliases (backward compat) ── */
     --purple-primary:   var(--rb-electric);
     --purple-medium:    var(--rb-electric-mid);
     --purple-light:     var(--rb-electric-hi);
@@ -77,7 +63,6 @@
 }
 
 [data-theme="light"] {
-    /* ── RB22 Light — crisp white with electric blue accents ── */
     --rb-electric:      #1255e0;
     --rb-electric-mid:  #1e6bff;
     --rb-electric-hi:   #2979ff;
@@ -113,13 +98,9 @@
     --color-warning:    #e07b00;
     --color-danger:     #cc0018;
 
-    /* ── Override specific components for light mode ── */
     --gradient-title:   linear-gradient(135deg, #050e35 0%, #1255e0 60%, #2979ff 100%);
 }
 
-/* ============================================================
-   RESET & BASE
-   ============================================================ */
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -129,11 +110,9 @@ body {
     min-height: 100vh;
     padding: 12px;
     color: var(--text-primary);
-    /* subtle carbon-fiber-like noise texture */
     background-attachment: fixed;
 }
 
-/* Animated background orbs */
 body::before {
     content: '';
     position: fixed;
@@ -153,9 +132,6 @@ body > * { position: relative; z-index: 1; }
     margin: 0 auto;
 }
 
-/* ============================================================
-   GLASS CARD MIXIN — apply to any container
-   ============================================================ */
 
 .glass,
 .card,
@@ -171,7 +147,6 @@ body > * { position: relative; z-index: 1; }
     -webkit-backdrop-filter: var(--glass-blur);
     border: 1px solid var(--glass-border);
     box-shadow: var(--shadow-card);
-    /* top highlight streak */
     position: relative;
 }
 
@@ -196,9 +171,6 @@ body > * { position: relative; z-index: 1; }
     z-index: 1;
 }
 
-/* ============================================================
-   AUTHENTICATION
-   ============================================================ */
 
 .auth-container {
     max-width: 450px;
@@ -208,7 +180,6 @@ body > * { position: relative; z-index: 1; }
     overflow: hidden;
 }
 
-/* Red racing stripe accent top */
 .auth-container::after {
     content: '';
     position: absolute;
@@ -394,9 +365,6 @@ body > * { position: relative; z-index: 1; }
     text-decoration: underline;
 }
 
-/* ============================================================
-   HEADER
-   ============================================================ */
 
 .header {
     display: flex;
@@ -452,9 +420,6 @@ body > * { position: relative; z-index: 1; }
     margin-right: 12px;
 }
 
-/* ============================================================
-   BUTTONS
-   ============================================================ */
 
 .btn-theme, .btn-export, .btn-logout {
     padding: 10px 16px;
@@ -531,9 +496,6 @@ body > * { position: relative; z-index: 1; }
     background: var(--gradient-secondary);
 }
 
-/* ============================================================
-   TABS
-   ============================================================ */
 
 .nav-tabs {
     display: flex;
@@ -574,9 +536,6 @@ body > * { position: relative; z-index: 1; }
 .screen { display: none; }
 .screen.active { display: block; }
 
-/* ============================================================
-   SETUP CARD
-   ============================================================ */
 
 .setup-card {
     max-width: 480px;
@@ -629,9 +588,6 @@ body > * { position: relative; z-index: 1; }
     margin-bottom: 24px;
 }
 
-/* ============================================================
-   INPUTS
-   ============================================================ */
 
 .input-group {
     text-align: left;
@@ -668,9 +624,6 @@ input[type="number"]:focus {
     background: rgba(21, 101, 255, 0.1);
 }
 
-/* ============================================================
-   WEEK BANNER
-   ============================================================ */
 
 .week-banner {
     background: linear-gradient(135deg, rgba(21, 101, 255, 0.18) 0%, rgba(6, 13, 46, 0.45) 60%, rgba(204, 0, 24, 0.08) 100%) !important;
@@ -738,9 +691,6 @@ input[type="number"]:focus {
     letter-spacing: 0.5px;
 }
 
-/* ============================================================
-   TRACKER GRID
-   ============================================================ */
 
 .tracker-grid {
     display: grid;
@@ -755,7 +705,6 @@ input[type="number"]:focus {
     overflow: hidden;
 }
 
-/* Subtle top border line on cards */
 .card::after {
     content: '';
     position: absolute;
@@ -774,9 +723,6 @@ input[type="number"]:focus {
     margin-bottom: 16px;
 }
 
-/* ============================================================
-   STATS
-   ============================================================ */
 
 .stat-main {
     text-align: center;
@@ -842,9 +788,6 @@ input[type="number"]:focus {
 
 .stat-value.negative { color: var(--color-danger) !important; }
 
-/* ============================================================
-   PROGRESS BAR
-   ============================================================ */
 
 .progress-section { margin-bottom: 12px; }
 
@@ -883,9 +826,6 @@ input[type="number"]:focus {
     box-shadow: 0 0 10px rgba(204, 0, 24, 0.6);
 }
 
-/* ============================================================
-   WARNING BOX
-   ============================================================ */
 
 .warning-box {
     padding: 10px;
@@ -903,9 +843,6 @@ input[type="number"]:focus {
 
 .hidden { display: none !important; }
 
-/* ============================================================
-   DAY BUTTONS
-   ============================================================ */
 
 .day-buttons {
     display: grid;
@@ -944,7 +881,6 @@ input[type="number"]:focus {
     box-shadow: var(--shadow-blue-sm);
 }
 
-/* Disabled = future days — clearly muted but still readable */
 .day-btn:disabled {
     background: rgba(255, 255, 255, 0.04);
     border: 1px dashed rgba(255, 255, 255, 0.15);
@@ -954,7 +890,6 @@ input[type="number"]:focus {
     box-shadow: none;
 }
 
-/* ── Light mode overrides ── */
 [data-theme="light"] .day-btn {
     background: rgba(21, 101, 255, 0.1);
     border: 1px solid rgba(21, 101, 255, 0.35);
@@ -982,9 +917,6 @@ input[type="number"]:focus {
     cursor: not-allowed;
 }
 
-/* ============================================================
-   EXPENSE INPUTS
-   ============================================================ */
 
 .expense-inputs {
     background: rgba(21, 101, 255, 0.06);
@@ -1012,9 +944,6 @@ input[type="number"]:focus {
     margin-bottom: 12px;
 }
 
-/* ============================================================
-   EXPENSE LIST
-   ============================================================ */
 
 .expense-list { margin-bottom: 16px; }
 
@@ -1089,7 +1018,6 @@ input[type="number"]:focus {
     backdrop-filter: blur(4px);
 }
 
-/* Day state variants */
 .expense-item.no-expense-day {
     background: rgba(255,255,255,0.01);
     border: 1px solid rgba(255,255,255,0.04);
@@ -1135,9 +1063,6 @@ input[type="number"]:focus {
 [data-theme="light"] .expense-item-no-expense { color: rgba(0,0,0,0.25); }
 [data-theme="light"] .expense-item-upcoming   { color: rgba(21,101,255,0.55); }
 
-/* ============================================================
-   SUMMARY TOTALS
-   ============================================================ */
 
 .summary-totals {
     border-top: 1px solid rgba(21, 101, 255, 0.18);
@@ -1172,9 +1097,6 @@ input[type="number"]:focus {
     filter: drop-shadow(0 0 8px rgba(21,101,255,0.4));
 }
 
-/* ============================================================
-   MONTHLY SECTION
-   ============================================================ */
 
 .monthly-header {
     display: flex;
@@ -1390,9 +1312,6 @@ input[type="number"]:focus {
     color: var(--text-secondary);
 }
 
-/* ============================================================
-   RESPONSIVE
-   ============================================================ */
 
 @media (max-width: 900px) {
     .tracker-grid      { grid-template-columns: 1fr; }
@@ -1411,9 +1330,6 @@ input[type="number"]:focus {
     .auth-form h2      { font-size: 22px; }
 }
 
-/* ============================================================
-   MOBILE MENU
-   ============================================================ */
 
 .mobile-menu-btn { display: none; }
 
@@ -1560,9 +1476,6 @@ input[type="number"]:focus {
     .week-banner-content { font-size: 13px; }
 }
 
-/* ============================================================
-   LIGHT MODE OVERRIDES — explicit fixes for washed-out areas
-   ============================================================ */
 
 [data-theme="light"] body::before {
     background:
@@ -1571,7 +1484,6 @@ input[type="number"]:focus {
         radial-gradient(ellipse 300px 200px at 70% 15%, rgba(68, 138, 255, 0.05) 0%, transparent 60%);
 }
 
-/* Week banner — solid blue tint instead of murky grey */
 [data-theme="light"] .week-banner {
     background: linear-gradient(135deg, rgba(21, 101, 255, 0.12) 0%, rgba(240, 244, 255, 0.85) 60%, rgba(204, 0, 24, 0.05) 100%) !important;
     border-color: rgba(21, 101, 255, 0.28) !important;
@@ -1581,7 +1493,6 @@ input[type="number"]:focus {
     background: linear-gradient(90deg, var(--rb-red) 0%, var(--rb-electric) 50%, transparent 100%);
 }
 
-/* Cards — white with stronger border */
 [data-theme="light"] .card,
 [data-theme="light"] .glass,
 [data-theme="light"] .auth-container,
@@ -1591,7 +1502,6 @@ input[type="number"]:focus {
     box-shadow: 0 4px 24px rgba(21, 101, 255, 0.1), 0 0 0 1px rgba(21, 101, 255, 0.1);
 }
 
-/* Nav tabs */
 [data-theme="light"] .nav-tabs {
     background: rgba(255, 255, 255, 0.8);
     border-color: rgba(21, 101, 255, 0.18);
@@ -1602,7 +1512,6 @@ input[type="number"]:focus {
     color: var(--rb-electric);
 }
 
-/* Stat items */
 [data-theme="light"] .stat-main {
     background: rgba(21, 101, 255, 0.07);
     border-color: rgba(21, 101, 255, 0.18);
@@ -1624,7 +1533,6 @@ input[type="number"]:focus {
     filter: none;
 }
 
-/* Progress bar */
 [data-theme="light"] .progress-bar {
     background: rgba(21, 101, 255, 0.1);
     border-color: rgba(21, 101, 255, 0.15);
@@ -1634,14 +1542,11 @@ input[type="number"]:focus {
     box-shadow: 0 0 8px rgba(21, 101, 255, 0.35);
 }
 
-/* Day buttons */
-/* Expense inputs area */
 [data-theme="light"] .expense-inputs {
     background: rgba(21, 101, 255, 0.05);
     border-color: rgba(21, 101, 255, 0.18);
 }
 
-/* Expense items */
 [data-theme="light"] .expense-item {
     background: rgba(21, 101, 255, 0.04);
     border-color: rgba(21, 101, 255, 0.14);
@@ -1663,7 +1568,6 @@ input[type="number"]:focus {
     border-top-color: rgba(21, 101, 255, 0.12);
 }
 
-/* Summary totals */
 [data-theme="light"] .summary-totals {
     border-top-color: rgba(21, 101, 255, 0.15);
 }
@@ -1673,7 +1577,6 @@ input[type="number"]:focus {
     filter: none;
 }
 
-/* Monthly stat cards */
 [data-theme="light"] .monthly-stat-card.blue {
     background: rgba(21, 101, 255, 0.1);
     border-color: rgba(21, 101, 255, 0.3);
@@ -1694,7 +1597,6 @@ input[type="number"]:focus {
     border-color: rgba(204, 0, 24, 0.28);
 }
 
-/* Breakdown & weekly sections */
 [data-theme="light"] .breakdown-section,
 [data-theme="light"] .weekly-section {
     background: rgba(255, 255, 255, 0.75);
@@ -1720,7 +1622,6 @@ input[type="number"]:focus {
     box-shadow: 0 4px 16px rgba(21, 101, 255, 0.1);
 }
 
-/* Warning box */
 [data-theme="light"] .warning-box {
     background: rgba(204, 0, 24, 0.08);
     border-color: rgba(204, 0, 24, 0.25);
@@ -1728,7 +1629,6 @@ input[type="number"]:focus {
 
 [data-theme="light"] .warning-box p { color: #cc0018; }
 
-/* Delete button */
 [data-theme="light"] .delete-btn {
     background: rgba(204, 0, 24, 0.08);
     border-color: rgba(204, 0, 24, 0.2);
@@ -1740,7 +1640,6 @@ input[type="number"]:focus {
     box-shadow: 0 0 10px rgba(204, 0, 24, 0.2);
 }
 
-/* Mobile menu */
 [data-theme="light"] .mobile-menu {
     background: rgba(255, 255, 255, 0.92);
     border-left-color: rgba(21, 101, 255, 0.2);

@@ -1,9 +1,8 @@
-import os 
+import os
 from datetime import timedelta
 
 class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY') or "dev-secret-key-changing-in-production"
-    DATABASE_NAME = "budget_tracker.db"
     SESSION_COOKIE_SECURE = False
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"

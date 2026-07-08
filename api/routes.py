@@ -14,6 +14,7 @@ from reportlab.graphics.shapes import Drawing, Rect, String
 from functools import wraps
 import google.generativeai as genai
 import os
+from api.categorize import categorize_item, CATEGORY_LABELS, CATEGORIES
 
 font_path = os.path.join(os.path.dirname(__file__), "..", "static", "fonts", "DejaVuSans.ttf")
 pdfmetrics.registerFont(TTFont("DejaVuSans", font_path))
@@ -22,6 +23,7 @@ api = Blueprint("api", __name__, url_prefix="/api")
 
 prompt = """You are a financial assistant that provides insights and recommendations based on the user's budget weekly data.
             Give exactly 3 lines, a short paragraph/analysis.
+            Provide actionable advice for the user to improve their spending habits and manage their budget effectively.
             Maximum of 80 characters.
             Return only the 3 lines, no bullet points, no numbering, only follow the instruction stated above.
             Mention the username.
@@ -29,20 +31,22 @@ prompt = """You are a financial assistant that provides insights and recommendat
             You may use this as reference for the data structure:
             - Username : {username}
             - Allowance : &#8369;{allowance:.2f}
-            - Total Fare : &#8369;{fare:.2f}
-            - Total Food : &#8369;{food:.2f}  
-            - Total Other : &#8369;{other:.2f}
+            - Spending by category :
+{category_lines}
             - Total Spent : &#8369;{spent:.2f}
             - Remaining : &#8369;{remaining:.2f}
         """
 def generate_budget_insights(allowance, totals, period="week"):
     try:
+        category_lines = "\n".join(
+            f"            - {CATEGORY_LABELS[c]} : &#8369;{totals.get(c, 0):.2f}"
+            for c in CATEGORIES
+            if totals.get(c, 0) > 0
+        ) or "            - No category spending yet"
         notes = prompt.format(
             username=session.get("username"),
             allowance = allowance,
-            fare = totals['fare'],
-            food = totals['food'],
-            other = totals['other'],
+            category_lines = category_lines,
             spent = totals['spent'],
             remaining = totals['remaining'],
         )
@@ -59,30 +63,39 @@ def generate_budget_insights(allowance, totals, period="week"):
             "Track your expenses daily to stay within your allowance and avoid overspending.",
         ]
 
-BG_DEEP       = colors.HexColor("#03071a")   
-BG_CARD       = colors.HexColor("#0a1240")   
-BG_ROW_ALT    = colors.HexColor("#060d2e")   
-PURPLE_BORDER = colors.HexColor("#1a3a80")   
-PURPLE_MAIN   = colors.HexColor("#1e6bff")   
-PURPLE_LIGHT  = colors.HexColor("#448aff")   
-TEXT_WHITE    = colors.HexColor("#e8eeff")   
-TEXT_LIGHT    = colors.HexColor("#9eb3d8")   
-TEXT_MUTED    = colors.HexColor("#4a6080")   
-GOLD          = colors.HexColor("#ffab00")   
-PINK          = colors.HexColor("#e8001d")   
-GREEN         = colors.HexColor("#00e5a0")   
+BG_DEEP       = colors.HexColor("#03071a")
+BG_CARD       = colors.HexColor("#0a1240")
+BG_ROW_ALT    = colors.HexColor("#060d2e")
+PURPLE_BORDER = colors.HexColor("#1a3a80")
+PURPLE_MAIN   = colors.HexColor("#1e6bff")
+PURPLE_LIGHT  = colors.HexColor("#448aff")
+TEXT_WHITE    = colors.HexColor("#e8eeff")
+TEXT_LIGHT    = colors.HexColor("#9eb3d8")
+TEXT_MUTED    = colors.HexColor("#4a6080")
+GOLD          = colors.HexColor("#ffab00")
+PINK          = colors.HexColor("#e8001d")
+GREEN         = colors.HexColor("#00e5a0")
 
-PAGE_W, PAGE_H = landscape(letter)         
+CATEGORY_PDF_COLORS = {
+    "fare":          PURPLE_MAIN,
+    "food":          GOLD,
+    "groceries":     GREEN,
+    "bills":         colors.HexColor("#ff8f00"),
+    "shopping":      PURPLE_LIGHT,
+    "entertainment": PINK,
+    "health":        colors.HexColor("#00b8d4"),
+    "other":         TEXT_MUTED,
+}
+
+PAGE_W, PAGE_H = landscape(letter)
 MARGIN = 0.42 * inch
 DAYS_MAP = {
     "Sunday": 0, "Monday": 1, "Tuesday": 2, "Wednesday": 3,
     "Thursday": 4, "Friday": 5, "Saturday": 6,
 }
 
-#  PDF BUILDING BLOCKS
 
 def _ps(name, font="Helvetica", size=12, color=TEXT_WHITE, align=TA_LEFT):
-    """Quick ParagraphStyle factory."""
     return ParagraphStyle(name, fontName=font, fontSize=size,
                           textColor=color, alignment=align,
                           leading=size * 1.35)
@@ -97,7 +110,6 @@ def _section_label(text):
 
 
 def _page_header(title, badge):
-    """Big bold title left, bracketed badge right, underlined."""
     usable = PAGE_W - 2 * MARGIN
     data = [[
         _p(title, "Helvetica-Bold", 19, PURPLE_LIGHT),
@@ -115,7 +127,6 @@ def _page_header(title, badge):
 
 
 def _data_table(headers, rows, col_widths):
-    """Dark-theme data table with purple header row."""
     data = [[_p(h, "Helvetica-Bold", 8, TEXT_WHITE) for h in headers]]
     for row in rows:
         data.append([_p(str(c), "Helvetica", 8, TEXT_LIGHT) for c in row])
@@ -132,7 +143,6 @@ def _data_table(headers, rows, col_widths):
 
 
 def _total_row(label, value, col_widths):
-    """Bold totals footer row (gold value, purple label)."""
     n = len(col_widths)
     cells = [_p(f"<b>{label}</b>", "Helvetica-Bold", 8, PURPLE_LIGHT)]
     for _ in range(n - 2):
@@ -150,7 +160,6 @@ def _total_row(label, value, col_widths):
 
 
 def _stat_card(label, value, accent, w=1.65 * inch, h=0.70 * inch):
-    """Mini KPI card — colored top bar, muted label, bright value."""
     d = Drawing(w, h)
     d.add(Rect(0, 0,     w,  h, fillColor=BG_CARD,  strokeColor=accent, strokeWidth=1))
     d.add(Rect(0, h - 3, w,  3, fillColor=accent,   strokeColor=None))
@@ -160,7 +169,6 @@ def _stat_card(label, value, accent, w=1.65 * inch, h=0.70 * inch):
 
 
 def _bar_chart(labels, values, bar_colors, width=420, height=108):
-    """Simple dark bar chart with labeled bars."""
     d = Drawing(width, height)
     d.add(Rect(0, 0, width, height, fillColor=BG_CARD,
                strokeColor=PURPLE_BORDER, strokeWidth=0.8))
@@ -205,7 +213,6 @@ def _note_box(text, w=1.5 * inch, h=0.70 * inch):
 
 
 def _stack(*items):
-    """Vertically stack flowables inside a single-column table."""
     t = Table([[item] for item in items])
     t.setStyle(TableStyle([
         ("VALIGN",        (0, 0), (-1, -1), "TOP"),
@@ -218,16 +225,12 @@ def _stack(*items):
 
 
 def _draw_bg(canv, doc):
-    """Dark blue page background with soft glow orbs."""
     canv.saveState()
-    # solid dark fill
     canv.setFillColor(BG_DEEP)
     canv.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
-    # top-left glow
     for radius, alpha in [(200, 0.04), (130, 0.07), (70, 0.11)]:
         canv.setFillColorRGB(0.54, 0.36, 0.96, alpha=alpha)
         canv.circle(PAGE_W * 0.14, PAGE_H * 0.86, radius, fill=1, stroke=0)
-    # bottom-right glow
     for radius, alpha in [(160, 0.03), (90, 0.05)]:
         canv.setFillColorRGB(0.93, 0.32, 0.60, alpha=alpha)
         canv.circle(PAGE_W * 0.87, PAGE_H * 0.14, radius, fill=1, stroke=0)
@@ -258,7 +261,6 @@ def _pdf_resp(buffer, filename):
 
 
 def _two_col_body(left_content, right_content):
-    """Place two stacks side by side with a small gap."""
     usable = PAGE_W - 2 * MARGIN
     lw = usable * 0.475
     rw = usable * 0.475
@@ -285,7 +287,6 @@ def _stat_cards_row(*cards):
     ]))
     return ct
 
-#  AUTH HELPERS
 
 def validate_password(password):
     if len(password) < 8:
@@ -322,7 +323,6 @@ def get_current_day():
     return ["Monday", "Tuesday", "Wednesday", "Thursday",
             "Friday", "Saturday", "Sunday"][datetime.now().weekday()]
 
-#  AUTH ROUTES
 
 @api.route("/register", methods=["POST"])
 def register():
@@ -332,7 +332,7 @@ def register():
         email    = data.get("email",    "").strip()
         password = data.get("password", "").strip()
 
-        if not username or len(username) < 3:
+        if not username or len(username) < 5:
             return jsonify({"error": "Username must be at least 3 characters long."}), 400
         if not email or "@" not in email:
             return jsonify({"error": "Invalid email address."}), 400
@@ -388,7 +388,6 @@ def check_auth():
         return jsonify({"authenticated": True, "username": session.get("username")})
     return jsonify({"authenticated": False})
 
-#  BUDGET ROUTES
 
 @api.route("/current-week-info", methods=["GET"])
 @login_required
@@ -424,6 +423,81 @@ def set_allowance():
         else:
             budget_id = db.create_budget(user_id, week_start, week_end, allowance)
         return jsonify({"success": True, "allowance": allowance, "budget_id": budget_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@api.route("/categorize-item", methods=["POST"])
+@login_required
+def categorize_item_route():
+    try:
+        data = request.get_json()
+        name = (data.get("name") or "").strip()
+        if not name:
+            return jsonify({"error": "Item name is required"}), 400
+        category = categorize_item(name)
+        return jsonify({
+            "category": category,
+            "label": CATEGORY_LABELS[category],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@api.route("/add-expense-item", methods=["POST"])
+@login_required
+def add_expense_item_route():
+    try:
+        data = request.get_json()
+        user_id = get_user_id()
+        week_start, week_end = get_week_range()
+
+        day = data.get("day")
+        name = (data.get("name") or "").strip()
+        amount = float(data.get("amount", 0))
+        category = (data.get("category") or "").strip().lower()
+
+        if not day:
+            return jsonify({"error": "Day is required"}), 400
+        if not name:
+            return jsonify({"error": "Item name is required"}), 400
+        if amount <= 0:
+            return jsonify({"error": "Amount must be greater than 0"}), 400
+
+        if category not in CATEGORIES:
+            category = categorize_item(name)
+
+        expense_date = week_start + timedelta(days=DAYS_MAP.get(day, 0))
+        budget = db.get_budget_by_week(user_id, week_start, week_end)
+        if not budget:
+            return jsonify({"error": "Please set allowance first."}), 404
+
+        item, totals = db.add_expense_item(
+            budget["id"], day, expense_date, name, amount, category,
+        )
+        return jsonify({
+            "success": True,
+            "day": day,
+            "item": {
+                "id": item["id"],
+                "name": item["name"],
+                "amount": item["amount"],
+                "category": item["category"],
+            },
+            "totals": totals,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@api.route("/delete-expense-item/<int:item_id>", methods=["DELETE"])
+@login_required
+def delete_expense_item_route(item_id):
+    try:
+        deleted, _ = db.delete_expense_item(item_id)
+        if deleted:
+            return jsonify({"success": True})
+        return jsonify({"error": "Item not found"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -482,29 +556,32 @@ def get_budget():
         if not budget:
             return jsonify({
                 "allowance": 0, "expenses": {},
-                "totals": {"fare": 0, "food": 0, "other": 0,
-                           "spent": 0, "remaining": 0},
+                "totals": {**{c: 0 for c in CATEGORIES}, "spent": 0, "remaining": 0},
                 "days_logged": 0,
             })
 
         rows = db.get_expenses_by_budget(budget["id"])
         expenses = {}
-        tf = tf2 = to = 0
+        cat_totals = {c: 0 for c in CATEGORIES}
         for r in rows:
+            items = db.get_items_by_expense(r["id"])
             expenses[r["day"]] = {
-                "fare": r["fare"], "food": r["food"],
-                "other": r["other"], "total": r["total"],
+                **{c: r[c] for c in CATEGORIES},
+                "total": r["total"],
+                "items": [
+                    {"id": i["id"], "name": i["name"],
+                     "amount": i["amount"], "category": i["category"]}
+                    for i in items
+                ],
             }
-            tf  += r["fare"]
-            tf2 += r["food"]
-            to  += r["other"]
+            for c in CATEGORIES:
+                cat_totals[c] += r[c]
 
-        spent = tf + tf2 + to
+        spent = sum(cat_totals.values())
         return jsonify({
             "allowance":   budget["allowance"],
             "expenses":    expenses,
-            "totals":      {"fare": tf, "food": tf2, "other": to,
-                            "spent": spent,
+            "totals":      {**cat_totals, "spent": spent,
                             "remaining": budget["allowance"] - spent},
             "days_logged": len(expenses),
         })
@@ -530,7 +607,7 @@ def monthly_summary():
         total_allowance = sum(w["allowance"]   for w in weeks)
         total_spent     = sum(w["total_spent"] for w in weeks)
         weekly_data = [
-            {"week_start": w["week_start_date"], "allowance": w["allowance"],
+            {"week_start": str(w["week_start_date"]), "allowance": w["allowance"],
              "spent": w["total_spent"], "saved": w["allowance"] - w["total_spent"]}
             for w in weeks
         ]
@@ -540,9 +617,7 @@ def monthly_summary():
             "total_allowance": total_allowance,
             "total_spent":     total_spent,
             "total_saved":     total_allowance - total_spent,
-            "breakdown":       {"fare":  breakdown["total_fare"],
-                                "food":  breakdown["total_food"],
-                                "other": breakdown["total_other"]},
+            "breakdown":       {c: breakdown.get(c, 0) for c in CATEGORIES},
             "weeks":     weekly_data,
             "num_weeks": len(weekly_data),
         })
@@ -550,7 +625,61 @@ def monthly_summary():
         return jsonify({"error": str(e)}), 500
 
 
-#  PDF EXPORT — WEEKLY  
+@api.route("/week-detail", methods=["GET"])
+@login_required
+def week_detail():
+    try:
+        user_id = get_user_id()
+        week_start_str = request.args.get("week_start")
+        if not week_start_str:
+            return jsonify({"error": "week_start is required"}), 400
+
+        try:
+            week_start = datetime.strptime(week_start_str, "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "Invalid week_start format"}), 400
+
+        week_end = week_start + timedelta(days=6)
+        budget = db.get_budget_by_week(user_id, week_start, week_end)
+        if not budget:
+            return jsonify({"error": "Week not found"}), 404
+
+        rows = db.get_expenses_by_budget(budget["id"])
+        expenses = {}
+        cat_totals = {c: 0 for c in CATEGORIES}
+        for r in rows:
+            items = db.get_items_by_expense(r["id"])
+            expenses[r["day"]] = {
+                **{c: r[c] for c in CATEGORIES},
+                "total": r["total"],
+                "items": [
+                    {"id": i["id"], "name": i["name"],
+                     "amount": i["amount"], "category": i["category"]}
+                    for i in items
+                ],
+            }
+            for c in CATEGORIES:
+                cat_totals[c] += r[c]
+
+        spent = sum(cat_totals.values())
+        return jsonify({
+            "week_start":           str(week_start),
+            "week_end":             str(week_end),
+            "week_start_formatted": week_start.strftime("%B %d, %Y"),
+            "week_end_formatted":   week_end.strftime("%B %d, %Y"),
+            "allowance":            budget["allowance"],
+            "expenses":             expenses,
+            "totals": {
+                **cat_totals,
+                "spent":     spent,
+                "remaining": budget["allowance"] - spent,
+            },
+            "days_logged": len(expenses),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 
 @api.route("/export-pdf", methods=["GET"])
 @login_required
@@ -564,42 +693,42 @@ def export_pdf():
         if not budget:
             return jsonify({"error": "Budget not found."}), 404
 
-        db_rows   = db.get_expenses_by_budget(budget["id"])
-        t_fare    = sum(r["fare"]  for r in db_rows)
-        t_food    = sum(r["food"]  for r in db_rows)
-        t_other   = sum(r["other"] for r in db_rows)
-        t_spent   = t_fare + t_food + t_other
-        remaining = budget["allowance"] - t_spent
+        db_rows    = db.get_expenses_by_budget(budget["id"])
+        cat_totals = {c: sum(r[c] for r in db_rows) for c in CATEGORIES}
+        t_spent    = sum(cat_totals.values())
+        remaining  = budget["allowance"] - t_spent
 
         usable = PAGE_W - 2 * MARGIN
         lw     = usable * 0.475
         rw     = usable * 0.475
         gw     = usable * 0.05
 
-        # ── income column widths ────────────────────────────────────
         icw = [lw*0.18, lw*0.22, lw*0.38, lw*0.22]
         scw = [lw*0.33, lw*0.30, lw*0.37]
         ecw = [rw*0.17, rw*0.23, rw*0.38, rw*0.22]
 
-        # ── build expense rows ──────────────────────────────────────
         exp_rows = []
         for r in db_rows:
             d = week_start + timedelta(days=DAYS_MAP.get(r["day"], 0))
             ds = d.strftime("%b %d")
-            if r["fare"]  > 0: exp_rows.append([ds, "Transportation", f"Fare ({r['day']})",  f"{r['fare']:,.2f}"])
-            if r["food"]  > 0: exp_rows.append([ds, "Food",           f"Food ({r['day']})",  f"{r['food']:,.2f}"])
-            if r["other"] > 0: exp_rows.append([ds, "Other",          f"Other ({r['day']})", f"{r['other']:,.2f}"])
+            items = db.get_items_by_expense(r["id"])
+            if items:
+                for item in items:
+                    cat_label = CATEGORY_LABELS.get(item["category"], "Other")
+                    exp_rows.append([ds, cat_label, item["name"], f"{item['amount']:,.2f}"])
+            else:
+                for c in CATEGORIES:
+                    if r[c] > 0:
+                        exp_rows.append([ds, CATEGORY_LABELS[c], f"{CATEGORY_LABELS[c]} ({r['day']})", f"{r[c]:,.2f}"])
         if not exp_rows:
             exp_rows = [["—", "—", "No expenses logged yet", "0.00"]]
 
         elements = []
 
-        # header
         badge = f"[ {week_start.strftime('%b %d')} \u2013 {week_end.strftime('%b %d, %Y').upper()} ]"
         elements.append(_page_header("WEEKLY BUDGET TRACKER", badge))
         elements.append(Spacer(1, 10))
 
-        # stat cards
         elements.append(_stat_cards_row(
             _stat_card("Allowance",   f"{budget['allowance']:,.2f}", PURPLE_MAIN),
             _stat_card("Total Spent", f"{t_spent:,.2f}",             PINK),
@@ -608,7 +737,6 @@ def export_pdf():
         ))
         elements.append(Spacer(1, 10))
 
-        # left column — Income + Savings
         left = [
             _section_label("Income"),
             _data_table(
@@ -623,20 +751,18 @@ def export_pdf():
             _data_table(
                 ["Method", "Amount Saved", "Notes"],
                 [["End balance",  f"{remaining:,.2f}", "Remaining this week"],
-                 ["Disbursed",    f"{t_spent:,.2f}",  "Fare + Food + Other"]],
+                 ["Disbursed",    f"{t_spent:,.2f}",  "All categories combined"]],
                 scw,
             ),
             _total_row("Total Saved", f"{remaining:,.2f}", scw),
         ]
 
-        # right column — Expenses
         right = [
             _section_label("Expenses"),
             _data_table(["Date", "Category", "Description", "Amount"], exp_rows, ecw),
             _total_row("Total Expenses", f"{t_spent:,.2f}", ecw),
         ]
 
-        # two-column layout
         body = Table(
             [[_stack(*left), Spacer(gw, 1), _stack(*right)]],
             colWidths=[lw, gw, rw],
@@ -649,16 +775,16 @@ def export_pdf():
         elements.append(body)
         elements.append(Spacer(1, 10))
 
-        # chart + notes bottom row
         chart_w = int(lw + gw * 0.5)
+        chart_cats = [c for c in CATEGORIES if cat_totals[c] > 0]
         chart = _bar_chart(
-            ["Fare", "Food", "Other"],
-            [t_fare, t_food, t_other],
-            [PURPLE_MAIN, GOLD, PINK],
+            [CATEGORY_LABELS[c] for c in chart_cats],
+            [cat_totals[c] for c in chart_cats],
+            [CATEGORY_PDF_COLORS[c] for c in chart_cats],
             width=chart_w, height=108,
         )
-        
-        totals = {"fare": t_fare, "food": t_food, "other": t_other, "spent" : t_spent, "remaining": remaining}
+
+        totals = {**cat_totals, "spent": t_spent, "remaining": remaining}
         ai_notes = generate_budget_insights(budget["allowance"], totals, period="week")
         nw = rw * 0.30
         note_row = Table(
@@ -687,12 +813,11 @@ def export_pdf():
         elements.append(bottom)
 
         return _pdf_resp(_build(elements), f"budget_{week_start}-{week_end}.pdf")
-    
+
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-#  PDF EXPORT — MONTHLY  
 
 @api.route("/export-monthly-pdf", methods=["GET"])
 @login_required
@@ -712,9 +837,7 @@ def export_monthly_pdf():
         t_allow = sum(w["allowance"]   for w in weeks)
         t_spent = sum(w["total_spent"] for w in weeks)
         t_saved = t_allow - t_spent
-        t_fare  = breakdown.get("total_fare",  0)
-        t_food  = breakdown.get("total_food",  0)
-        t_other = breakdown.get("total_other", 0)
+        cat_totals = {c: breakdown.get(c, 0) for c in CATEGORIES}
 
         usable = PAGE_W - 2 * MARGIN
         lw = usable * 0.475
@@ -765,9 +888,9 @@ def export_monthly_pdf():
             _section_label("Expenses"),
             _data_table(
                 ["Date", "Category", "Description", "Amount"],
-                [["—", "Transportation", "Monthly fare total",  f"{t_fare:,.2f}"],
-                 ["—", "Food",           "Monthly food total",  f"{t_food:,.2f}"],
-                 ["—", "Other",          "Monthly other total", f"{t_other:,.2f}"]],
+                ([["—", CATEGORY_LABELS[c], f"Monthly {CATEGORY_LABELS[c].lower()} total", f"{cat_totals[c]:,.2f}"]
+                  for c in CATEGORIES if cat_totals[c] > 0]
+                 or [["—", "—", "No expenses", "0.00"]]),
                 ecw,
             ),
             _total_row("Total Expenses", f"{t_spent:,.2f}", ecw),
@@ -786,14 +909,15 @@ def export_monthly_pdf():
         elements.append(Spacer(1, 10))
 
         chart_w = int(lw + gw * 0.5)
+        chart_cats = [c for c in CATEGORIES if cat_totals[c] > 0]
         chart = _bar_chart(
-            ["Transportation", "Food", "Other"],
-            [t_fare, t_food, t_other],
-            [PURPLE_MAIN, GOLD, PINK],
+            [CATEGORY_LABELS[c] for c in chart_cats],
+            [cat_totals[c] for c in chart_cats],
+            [CATEGORY_PDF_COLORS[c] for c in chart_cats],
             width=chart_w, height=108,
         )
 
-        totals = {"fare": t_fare, "food": t_food, "other": t_other, "spent" : t_spent, "remaining": t_saved}
+        totals = {**cat_totals, "spent": t_spent, "remaining": t_saved}
         ai_notes = generate_budget_insights(t_allow, totals, period="month")
         nw = rw * 0.30
         note_row = Table(
@@ -822,8 +946,7 @@ def export_monthly_pdf():
         elements.append(bottom)
 
         return _pdf_resp(_build(elements), f"{year}_{month}.pdf")
-    
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    
-    
+

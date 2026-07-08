@@ -17,20 +17,24 @@ def create_app(config_name = "default"):
 
     app.secret_key = os.environ.get('SECRET_KEY', os.urandom(32))
 
-    CORS(app)
+    cors_origins = os.environ.get("CORS_ORIGINS", "")
+    if cors_origins:
+        origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
+        CORS(app, origins=origins, supports_credentials=True)
+    else:
+        CORS(app, supports_credentials=True)
 
     app.register_blueprint(api)
 
     with app.app_context():
         db.init_db()
 
-    #path route of the application
     @app.route("/")
     def index():
         if 'user_id' in session:
             return redirect(url_for('dashboard'))
         return render_template("login.html")
-    
+
     @app.route("/dashboard")
     def dashboard():
         if 'user_id' not in session:
@@ -40,7 +44,7 @@ def create_app(config_name = "default"):
     @app.route("/health")
     def health():
         return {"status": "Healthy"}, 200
-    
+
     return app
 
 if __name__ == "__main__":

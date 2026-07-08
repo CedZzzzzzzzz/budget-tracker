@@ -1,4 +1,3 @@
-// DOM Elements
 const loginForm = document.getElementById('loginForm');
 const registerForm = document.getElementById('registerForm');
 const showRegisterLink = document.getElementById('showRegisterLink');
@@ -6,7 +5,6 @@ const showLoginLink = document.getElementById('showLoginLink');
 const loginBtn = document.getElementById('loginBtn');
 const registerBtn = document.getElementById('registerBtn');
 
-// Switch between login and register forms
 showRegisterLink.addEventListener('click', (e) => {
     e.preventDefault();
     loginForm.classList.remove('active');
@@ -21,17 +19,14 @@ showLoginLink.addEventListener('click', (e) => {
     clearErrors();
 });
 
-// Handle login
 loginBtn.addEventListener('click', async () => {
     const username = document.getElementById('loginUsername').value.trim();
     const password = document.getElementById('loginPassword').value;
     const errorDiv = document.getElementById('loginError');
 
-    // Clear previous errors
     errorDiv.classList.add('hidden');
     errorDiv.textContent = '';
 
-    // Validation
     if (!username || !password) {
         showError('loginError', 'Please enter username and password');
         return;
@@ -47,7 +42,6 @@ loginBtn.addEventListener('click', async () => {
         const data = await response.json();
 
         if (response.ok) {
-            // Login successful - redirect to dashboard
             window.location.href = '/dashboard';
         } else {
             showError('loginError', data.error || 'Login failed');
@@ -57,18 +51,15 @@ loginBtn.addEventListener('click', async () => {
     }
 });
 
-// Handle register
 registerBtn.addEventListener('click', async () => {
     const username = document.getElementById('registerUsername').value.trim();
     const email = document.getElementById('registerEmail').value.trim();
     const password = document.getElementById('registerPassword').value;
     const errorDiv = document.getElementById('registerError');
 
-    // Clear previous errors
     errorDiv.classList.add('hidden');
     errorDiv.textContent = '';
 
-    // Validation
     if (!username || !email || !password) {
         showError('registerError', 'Please fill in all fields');
         return;
@@ -84,7 +75,6 @@ registerBtn.addEventListener('click', async () => {
         const data = await response.json();
 
         if (response.ok) {
-            // Registration successful - redirect to dashboard
             window.location.href = '/dashboard';
         } else {
             showError('registerError', data.error || 'Registration failed');
@@ -94,20 +84,17 @@ registerBtn.addEventListener('click', async () => {
     }
 });
 
-// Show error message
 function showError(elementId, message) {
     const errorDiv = document.getElementById(elementId);
     errorDiv.textContent = message;
     errorDiv.classList.remove('hidden');
 }
 
-// Clear all error messages
 function clearErrors() {
     document.getElementById('loginError').classList.add('hidden');
     document.getElementById('registerError').classList.add('hidden');
 }
 
-// Allow Enter key to submit
 document.getElementById('loginPassword').addEventListener('keypress', (e) => {
     if (e.key === 'Enter') loginBtn.click();
 });
@@ -120,14 +107,12 @@ window.addEventListener('DOMContentLoaded', async () => {
     try {
         const response = await fetch('/api/check-auth');
         const data = await response.json();
-        
+
         if (data.authenticated) {
-            // User is already logged in, redirect to dashboard
             console.log('User already authenticated, redirecting to dashboard');
             window.location.href = '/dashboard';
         }
     } catch (error) {
-        // Not authenticated or error - stay on login page
         console.log('Not authenticated, showing login page');
     }
 });
