@@ -10,7 +10,7 @@ A modern, full-stack web application for tracking weekly and monthly expenses wi
 
 ##  Live Demo
 
-**[https://budget-tracker-production-5caa.up.railway.app](https://budget-tracker-production-5caa.up.railway.app)**
+**[https://budget-trackerr.up.railway.app](https://budget-trackerr.up.railway.app)**
 
 ##  Features
 

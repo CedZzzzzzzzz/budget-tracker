@@ -5,7 +5,7 @@
 
 [[redirects]]
   from = "/api/*"
-  to = "https://budget-tracker-production-5caa.up.railway.app/api/:splat"
+  to = "https://budget-trackerr.up.railway.app/api/:splat"
   status = 200
   force = true
 
