@@ -15,12 +15,20 @@ def create_app(config_name = "default"):
     app = Flask(__name__)
     app.config.from_object(config[config_name])
 
-    app.secret_key = os.environ.get('SECRET_KEY', os.urandom(32))
+    secret_key = os.environ.get('SECRET_KEY')
+    if config_name == "production":
+        if not secret_key:
+            raise RuntimeError("SECRET_KEY must be set in production")
+        app.secret_key = secret_key
+    else:
+        app.secret_key = secret_key or os.urandom(32)
 
     cors_origins = os.environ.get("CORS_ORIGINS", "")
     if cors_origins:
         origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
         CORS(app, origins=origins, supports_credentials=True)
+    elif config_name == "production":
+        raise RuntimeError("CORS_ORIGINS must be set in production")
     else:
         CORS(app, supports_credentials=True)
 

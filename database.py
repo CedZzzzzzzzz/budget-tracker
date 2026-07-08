@@ -5,6 +5,10 @@ import os
 
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
+MAX_USERNAME_LEN = 50
+MAX_EMAIL_LEN = 255
+MAX_ITEM_NAME_LEN = 200
+
 def get_db():
     conn = psycopg2.connect(DATABASE_URL)
     return conn
@@ -78,6 +82,16 @@ def init_db():
         f'CHECK (category IN ({allowed}))'
     )
 
+    cursor.execute(
+        'CREATE INDEX IF NOT EXISTS idx_budgets_user_id ON budgets(user_id)'
+    )
+    cursor.execute(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_budget_id ON expenses(budget_id)'
+    )
+    cursor.execute(
+        'CREATE INDEX IF NOT EXISTS idx_expense_items_expense_id ON expense_items(expense_id)'
+    )
+
     conn.commit()
     conn.close()
     print("Database Initialized.")
@@ -129,13 +143,17 @@ def create_budget(user_id, week_start, week_end, allowance):
     conn.close()
     return budget_id
 
-def update_budget(budget_id, allowance):
+def update_budget(budget_id, user_id, allowance):
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
-    cursor.execute('UPDATE budgets SET allowance = %s WHERE id = %s', (allowance, budget_id))
+    cursor.execute(
+        'UPDATE budgets SET allowance = %s WHERE id = %s AND user_id = %s',
+        (allowance, budget_id, user_id),
+    )
+    updated = cursor.rowcount > 0
     conn.commit()
     conn.close()
-    return True
+    return updated
 
 def get_budget_by_week(user_id, week_start, week_end):
     conn = psycopg2.connect(DATABASE_URL)
@@ -254,7 +272,7 @@ def get_items_by_budget(budget_id):
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute('''
-        SELECT ei.*, e.day
+        SELECT ei.*, e.day, e.id AS expense_id
         FROM expense_items ei
         JOIN expenses e ON ei.expense_id = e.id
         WHERE e.budget_id = %s
@@ -263,6 +281,34 @@ def get_items_by_budget(budget_id):
     items = cursor.fetchall()
     conn.close()
     return [dict(row) for row in items]
+
+
+def get_items_grouped_by_expense_id(budget_id):
+    grouped = {}
+    for item in get_items_by_budget(budget_id):
+        expense_id = item['expense_id']
+        grouped.setdefault(expense_id, []).append({
+            'id': item['id'],
+            'name': item['name'],
+            'amount': item['amount'],
+            'category': item['category'],
+        })
+    return grouped
+
+
+def expense_item_belongs_to_user(item_id, user_id):
+    conn = psycopg2.connect(DATABASE_URL)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT 1
+        FROM expense_items ei
+        JOIN expenses e ON ei.expense_id = e.id
+        JOIN budgets b ON e.budget_id = b.id
+        WHERE ei.id = %s AND b.user_id = %s
+    ''', (item_id, user_id))
+    owned = cursor.fetchone() is not None
+    conn.close()
+    return owned
 
 
 def _recalculate_expense_totals(cursor, expense_id):
@@ -343,7 +389,10 @@ def add_expense_item(budget_id, day, expense_date, name, amount, category):
     return item, {**breakdown, 'total': total}
 
 
-def delete_expense_item(item_id):
+def delete_expense_item(item_id, user_id):
+    if not expense_item_belongs_to_user(item_id, user_id):
+        return False, None
+
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     cursor.execute(
@@ -369,3 +418,31 @@ def delete_expense_item(item_id):
     conn.commit()
     conn.close()
     return True, totals
+
+
+def update_expense_item(item_id, user_id, name, amount, category):
+    if not expense_item_belongs_to_user(item_id, user_id):
+        return None, None
+
+    conn = psycopg2.connect(DATABASE_URL)
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute(
+        'SELECT expense_id FROM expense_items WHERE id = %s', (item_id,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None, None
+
+    expense_id = row['expense_id']
+    cursor.execute('''
+        UPDATE expense_items
+        SET name = %s, amount = %s, category = %s
+        WHERE id = %s
+        RETURNING *
+    ''', (name, amount, category, item_id))
+    item = dict(cursor.fetchone())
+    breakdown, total = _recalculate_expense_totals(cursor, expense_id)
+    conn.commit()
+    conn.close()
+    return item, {**breakdown, 'total': total}

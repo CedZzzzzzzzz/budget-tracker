@@ -13,13 +13,25 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.graphics.shapes import Drawing, Rect, String
 from functools import wraps
 import google.generativeai as genai
+import logging
 import os
 from api.categorize import categorize_item, CATEGORY_LABELS, CATEGORIES
 
+logger = logging.getLogger(__name__)
+
 font_path = os.path.join(os.path.dirname(__file__), "..", "static", "fonts", "DejaVuSans.ttf")
-pdfmetrics.registerFont(TTFont("DejaVuSans", font_path))
+try:
+    if os.path.isfile(font_path):
+        pdfmetrics.registerFont(TTFont("DejaVuSans", font_path))
+except Exception:
+    logger.warning("DejaVuSans font not loaded; PDF notes may fall back to default font")
 
 api = Blueprint("api", __name__, url_prefix="/api")
+
+MAX_USERNAME_LEN = db.MAX_USERNAME_LEN
+MAX_EMAIL_LEN = db.MAX_EMAIL_LEN
+MAX_ITEM_NAME_LEN = db.MAX_ITEM_NAME_LEN
+MAX_PASSWORD_LEN = 128
 
 prompt = """You are a financial assistant that provides insights and recommendations based on the user's budget weekly data.
             Give exactly 3 lines, a short paragraph/analysis.
@@ -57,6 +69,7 @@ def generate_budget_insights(allowance, totals, period="week"):
         lines = [line.strip().replace("₱", "&#8369;") for line in response.text.strip().split("\n") if line.strip()]
         return lines[:3]
     except Exception:
+        logger.exception("Gemini insight generation failed")
         return [
             "Review your spending habits to identify areas for improvement.",
             "Consider setting aside a portion of your remaining budget for savings.",
@@ -313,6 +326,25 @@ def get_user_id():
     return session.get("user_id")
 
 
+def internal_error():
+    return jsonify({"error": "An internal error occurred"}), 500
+
+
+def build_expenses_payload(rows, items_by_expense):
+    expenses = {}
+    cat_totals = {c: 0 for c in CATEGORIES}
+    for r in rows:
+        items = items_by_expense.get(r["id"], [])
+        expenses[r["day"]] = {
+            **{c: r[c] for c in CATEGORIES},
+            "total": r["total"],
+            "items": items,
+        }
+        for c in CATEGORIES:
+            cat_totals[c] += r[c]
+    return expenses, cat_totals
+
+
 def get_week_range():
     today      = datetime.now().date()
     week_start = today - timedelta(days=(today.weekday() + 1) % 7)
@@ -333,9 +365,15 @@ def register():
         password = data.get("password", "").strip()
 
         if not username or len(username) < 5:
-            return jsonify({"error": "Username must be at least 3 characters long."}), 400
+            return jsonify({"error": "Username must be at least 5 characters long."}), 400
+        if len(username) > MAX_USERNAME_LEN:
+            return jsonify({"error": f"Username must be at most {MAX_USERNAME_LEN} characters."}), 400
         if not email or "@" not in email:
             return jsonify({"error": "Invalid email address."}), 400
+        if len(email) > MAX_EMAIL_LEN:
+            return jsonify({"error": f"Email must be at most {MAX_EMAIL_LEN} characters."}), 400
+        if len(password) > MAX_PASSWORD_LEN:
+            return jsonify({"error": "Password is too long."}), 400
         is_valid, msg = validate_password(password)
         if not is_valid:
             return jsonify({"error": msg}), 400
@@ -351,7 +389,8 @@ def register():
             return jsonify({"success": True, "username": username})
         return jsonify({"error": "Registration failed"}), 500
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("register failed: %s", e)
+        return internal_error()
 
 
 @api.route("/login", methods=["POST"])
@@ -363,6 +402,8 @@ def login():
 
         if not username or not password:
             return jsonify({"error": "Username and password are required"}), 400
+        if len(username) > MAX_USERNAME_LEN or len(password) > MAX_PASSWORD_LEN:
+            return jsonify({"error": "Invalid credentials"}), 400
         user = db.get_user_by_username(username)
         if not user:
             return jsonify({"error": "Username does not exist"}), 401
@@ -373,7 +414,8 @@ def login():
         session["username"] = user["username"]
         return jsonify({"success": True, "username": user["username"]})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("login failed: %s", e)
+        return internal_error()
 
 
 @api.route("/logout", methods=["POST"])
@@ -418,13 +460,15 @@ def set_allowance():
         week_start, week_end = get_week_range()
         existing = db.get_budget_by_week(user_id, week_start, week_end)
         if existing:
-            db.update_budget(existing["id"], allowance)
+            if not db.update_budget(existing["id"], user_id, allowance):
+                return jsonify({"error": "Budget not found."}), 404
             budget_id = existing["id"]
         else:
             budget_id = db.create_budget(user_id, week_start, week_end, allowance)
         return jsonify({"success": True, "allowance": allowance, "budget_id": budget_id})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("set_allowance failed: %s", e)
+        return internal_error()
 
 
 @api.route("/categorize-item", methods=["POST"])
@@ -435,13 +479,16 @@ def categorize_item_route():
         name = (data.get("name") or "").strip()
         if not name:
             return jsonify({"error": "Item name is required"}), 400
+        if len(name) > MAX_ITEM_NAME_LEN:
+            return jsonify({"error": f"Item name must be at most {MAX_ITEM_NAME_LEN} characters."}), 400
         category = categorize_item(name)
         return jsonify({
             "category": category,
             "label": CATEGORY_LABELS[category],
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("categorize_item failed: %s", e)
+        return internal_error()
 
 
 @api.route("/add-expense-item", methods=["POST"])
@@ -461,6 +508,8 @@ def add_expense_item_route():
             return jsonify({"error": "Day is required"}), 400
         if not name:
             return jsonify({"error": "Item name is required"}), 400
+        if len(name) > MAX_ITEM_NAME_LEN:
+            return jsonify({"error": f"Item name must be at most {MAX_ITEM_NAME_LEN} characters."}), 400
         if amount <= 0:
             return jsonify({"error": "Amount must be greater than 0"}), 400
 
@@ -487,19 +536,60 @@ def add_expense_item_route():
             "totals": totals,
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("add_expense_item failed: %s", e)
+        return internal_error()
+
+
+@api.route("/edit-expense-item/<int:item_id>", methods=["PUT"])
+@login_required
+def edit_expense_item_route(item_id):
+    try:
+        data = request.get_json()
+        user_id = get_user_id()
+        name = (data.get("name") or "").strip()
+        amount = float(data.get("amount", 0))
+        category = (data.get("category") or "").strip().lower()
+
+        if not name:
+            return jsonify({"error": "Item name is required"}), 400
+        if len(name) > MAX_ITEM_NAME_LEN:
+            return jsonify({"error": f"Item name must be at most {MAX_ITEM_NAME_LEN} characters."}), 400
+        if amount <= 0:
+            return jsonify({"error": "Amount must be greater than 0"}), 400
+        if category not in CATEGORIES:
+            category = categorize_item(name)
+
+        item, totals = db.update_expense_item(item_id, user_id, name, amount, category)
+        if not item:
+            return jsonify({"error": "Item not found"}), 404
+
+        return jsonify({
+            "success": True,
+            "item": {
+                "id": item["id"],
+                "name": item["name"],
+                "amount": item["amount"],
+                "category": item["category"],
+            },
+            "totals": totals,
+        })
+    except Exception as e:
+        logger.exception("edit_expense_item failed: %s", e)
+        return internal_error()
 
 
 @api.route("/delete-expense-item/<int:item_id>", methods=["DELETE"])
 @login_required
 def delete_expense_item_route(item_id):
     try:
-        deleted, _ = db.delete_expense_item(item_id)
+        user_id = get_user_id()
+        deleted, _ = db.delete_expense_item(item_id, user_id)
         if deleted:
             return jsonify({"success": True})
         return jsonify({"error": "Item not found"}), 404
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("delete_expense_item failed: %s", e)
+        return internal_error()
 
 
 @api.route("/add-expense", methods=["POST"])
@@ -526,7 +616,8 @@ def add_expense():
                                         "other": other, "total": total}})
         return jsonify({"error": f"Expenses for {day} already exist"})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("add_expense failed: %s", e)
+        return internal_error()
 
 
 @api.route("/delete-expense/<day>", methods=["DELETE"])
@@ -542,7 +633,8 @@ def delete_expense(day):
             return jsonify({"success": True})
         return jsonify({"error": f"No expenses for {day}"}), 404
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("delete_expense failed: %s", e)
+        return internal_error()
 
 
 @api.route("/get-budget", methods=["GET"])
@@ -561,21 +653,8 @@ def get_budget():
             })
 
         rows = db.get_expenses_by_budget(budget["id"])
-        expenses = {}
-        cat_totals = {c: 0 for c in CATEGORIES}
-        for r in rows:
-            items = db.get_items_by_expense(r["id"])
-            expenses[r["day"]] = {
-                **{c: r[c] for c in CATEGORIES},
-                "total": r["total"],
-                "items": [
-                    {"id": i["id"], "name": i["name"],
-                     "amount": i["amount"], "category": i["category"]}
-                    for i in items
-                ],
-            }
-            for c in CATEGORIES:
-                cat_totals[c] += r[c]
+        items_by_expense = db.get_items_grouped_by_expense_id(budget["id"])
+        expenses, cat_totals = build_expenses_payload(rows, items_by_expense)
 
         spent = sum(cat_totals.values())
         return jsonify({
@@ -586,7 +665,8 @@ def get_budget():
             "days_logged": len(expenses),
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("get_budget failed: %s", e)
+        return internal_error()
 
 
 @api.route("/monthly-summary", methods=["GET"])
@@ -622,7 +702,8 @@ def monthly_summary():
             "num_weeks": len(weekly_data),
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("monthly_summary failed: %s", e)
+        return internal_error()
 
 
 @api.route("/week-detail", methods=["GET"])
@@ -645,21 +726,8 @@ def week_detail():
             return jsonify({"error": "Week not found"}), 404
 
         rows = db.get_expenses_by_budget(budget["id"])
-        expenses = {}
-        cat_totals = {c: 0 for c in CATEGORIES}
-        for r in rows:
-            items = db.get_items_by_expense(r["id"])
-            expenses[r["day"]] = {
-                **{c: r[c] for c in CATEGORIES},
-                "total": r["total"],
-                "items": [
-                    {"id": i["id"], "name": i["name"],
-                     "amount": i["amount"], "category": i["category"]}
-                    for i in items
-                ],
-            }
-            for c in CATEGORIES:
-                cat_totals[c] += r[c]
+        items_by_expense = db.get_items_grouped_by_expense_id(budget["id"])
+        expenses, cat_totals = build_expenses_payload(rows, items_by_expense)
 
         spent = sum(cat_totals.values())
         return jsonify({
@@ -677,7 +745,8 @@ def week_detail():
             "days_logged": len(expenses),
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("week_detail failed: %s", e)
+        return internal_error()
 
 
 
@@ -694,6 +763,7 @@ def export_pdf():
             return jsonify({"error": "Budget not found."}), 404
 
         db_rows    = db.get_expenses_by_budget(budget["id"])
+        items_by_expense = db.get_items_grouped_by_expense_id(budget["id"])
         cat_totals = {c: sum(r[c] for r in db_rows) for c in CATEGORIES}
         t_spent    = sum(cat_totals.values())
         remaining  = budget["allowance"] - t_spent
@@ -711,7 +781,7 @@ def export_pdf():
         for r in db_rows:
             d = week_start + timedelta(days=DAYS_MAP.get(r["day"], 0))
             ds = d.strftime("%b %d")
-            items = db.get_items_by_expense(r["id"])
+            items = items_by_expense.get(r["id"], [])
             if items:
                 for item in items:
                     cat_label = CATEGORY_LABELS.get(item["category"], "Other")
@@ -816,7 +886,8 @@ def export_pdf():
 
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("export_pdf failed: %s", e)
+        return internal_error()
 
 
 @api.route("/export-monthly-pdf", methods=["GET"])
@@ -948,5 +1019,6 @@ def export_monthly_pdf():
         return _pdf_resp(_build(elements), f"{year}_{month}.pdf")
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("export_monthly_pdf failed: %s", e)
+        return internal_error()
 

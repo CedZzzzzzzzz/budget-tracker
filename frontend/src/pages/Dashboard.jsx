@@ -220,6 +220,11 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
   const [itemAmount, setItemAmount] = useState('');
   const [category, setCategory] = useState('other');
   const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [editAmount, setEditAmount] = useState('');
+  const [editCategory, setEditCategory] = useState('other');
+  const [savingEdit, setSavingEdit] = useState(false);
   const [modalDay, setModalDay] = useState(null);
 
   useEffect(() => {
@@ -269,10 +274,98 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
     if (!confirm('Remove this item?')) return;
     try {
       await apiFetch(`/api/delete-expense-item/${itemId}`, { method: 'DELETE' });
+      if (editingId === itemId) setEditingId(null);
       onRefresh();
     } catch {
       alert('Server error');
     }
+  };
+
+  const startEdit = (item) => {
+    setEditingId(item.id);
+    setEditName(item.name);
+    setEditAmount(String(item.amount));
+    setEditCategory(item.category);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditName('');
+    setEditAmount('');
+    setEditCategory('other');
+  };
+
+  const saveEdit = async (itemId) => {
+    const name = editName.trim();
+    const amount = parseFloat(editAmount);
+    if (!name) return alert('Enter an item name');
+    if (!amount || amount <= 0) return alert('Enter a valid amount');
+    setSavingEdit(true);
+    try {
+      const r = await apiFetch(`/api/edit-expense-item/${itemId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name, amount, category: editCategory }),
+      });
+      if (r.ok) {
+        cancelEdit();
+        onRefresh();
+      } else {
+        const d = await r.json();
+        alert(d.error || 'Failed to update item');
+      }
+    } catch {
+      alert('Server error');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const renderExpenseItem = (item) => {
+    if (editingId === item.id) {
+      return (
+        <div key={item.id} className="space-y-3 rounded-xl bg-purple-deep/40 px-3 py-2.5">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_100px]">
+            <input type="text" className={input} value={editName} onChange={(e) => setEditName(e.target.value)} />
+            <input type="number" className={input} min="0" step="0.01" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={editCategory}
+              onChange={(e) => setEditCategory(e.target.value)}
+              className="rounded-lg border border-purple-primary/15 bg-purple-deep/60 px-2 py-1 text-xs text-purple-text-dim"
+            >
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
+              ))}
+            </select>
+            <button type="button" className={`${btnPrimary} px-3 py-1.5 text-xs`} onClick={() => saveEdit(item.id)} disabled={savingEdit}>
+              {savingEdit ? '…' : 'Save'}
+            </button>
+            <button type="button" className="text-xs text-purple-muted transition hover:text-purple-text" onClick={cancelEdit}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div key={item.id} className="flex items-center justify-between rounded-xl bg-purple-deep/40 px-3 py-2.5">
+        <div className="flex items-center gap-2">
+          <CategoryBadge category={item.category} />
+          <span className="text-sm text-purple-text-dim">{item.name}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-purple-primary-light">₱{item.amount.toFixed(2)}</span>
+          <button type="button" className="text-xs text-purple-muted transition hover:text-purple-primary-light" onClick={() => startEdit(item)} aria-label="Edit item">
+            Edit
+          </button>
+          <button type="button" className="text-xs text-purple-muted transition hover:text-red-400" onClick={() => deleteItem(item.id)} aria-label="Remove item">
+            ✕
+          </button>
+        </div>
+      </div>
+    );
   };
 
   const deleteDay = async (day) => {
@@ -345,6 +438,13 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
         </div>
 
         <div className="space-y-5">
+          {totals.spent === 0 && (
+            <div className={`${card} p-5 text-center`}>
+              <p className="text-sm font-medium text-purple-text">No expenses yet this week</p>
+              <p className={`mt-1 ${subtext}`}>Select a day below and add your first item — fare, food, groceries, and more.</p>
+            </div>
+          )}
+
           {totals.spent > 0 && (
             <div className={`${card} p-5`}>
               <SectionTitle
@@ -425,19 +525,12 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
                 {dayItems.length > 0 && (
                   <div className="space-y-2">
                     <p className={statLabel}>Items</p>
-                    {dayItems.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between rounded-xl bg-purple-deep/40 px-3 py-2.5">
-                        <div className="flex items-center gap-2">
-                          <CategoryBadge category={item.category} />
-                          <span className="text-sm text-purple-text-dim">{item.name}</span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-sm font-medium text-purple-primary-light">₱{item.amount.toFixed(2)}</span>
-                          <button type="button" className="text-xs text-purple-muted transition hover:text-red-400" onClick={() => deleteItem(item.id)}>✕</button>
-                        </div>
-                      </div>
-                    ))}
+                    {dayItems.map((item) => renderExpenseItem(item))}
                   </div>
+                )}
+
+                {dayItems.length === 0 && (
+                  <p className={`text-center text-xs ${subtext}`}>No items for {selDay} yet — add one above.</p>
                 )}
 
                 <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-purple-primary/10 pt-3 text-xs text-purple-muted">
@@ -516,6 +609,7 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
           expense={expenses[modalDay]}
           isToday={DAYS[today] === modalDay}
           onDeleteItem={deleteItem}
+          onEditItem={startEdit}
           onDeleteDay={deleteDay}
           onClose={() => setModalDay(null)}
         />
@@ -524,7 +618,7 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
   );
 }
 
-function DayDetailModal({ day, expense, isToday, onDeleteItem, onDeleteDay, onClose }) {
+function DayDetailModal({ day, expense, isToday, onDeleteItem, onEditItem, onDeleteDay, onClose }) {
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -589,8 +683,16 @@ function DayDetailModal({ day, expense, isToday, onDeleteItem, onDeleteDay, onCl
                     {its.map((item) => (
                       <div key={item.id} className={`${cardInner} flex items-center justify-between gap-3 px-3 py-2.5`}>
                         <span className="truncate text-sm text-purple-text-dim">{item.name}</span>
-                        <div className="flex shrink-0 items-center gap-3">
+                        <div className="flex shrink-0 items-center gap-2">
                           <span className="text-sm font-medium text-purple-primary-light">₱{item.amount.toFixed(2)}</span>
+                          <button
+                            type="button"
+                            className="text-xs text-purple-muted transition hover:text-purple-primary-light"
+                            onClick={() => { onEditItem(item); onClose(); }}
+                            aria-label="Edit item"
+                          >
+                            Edit
+                          </button>
                           <button
                             type="button"
                             className="text-xs text-purple-muted transition hover:text-red-400"
@@ -882,7 +984,10 @@ function MonthlyTab({ initMonth, initYear }) {
       </div>
 
       {!data || data.num_weeks === 0 ? (
-        <p className={`py-12 text-center ${subtext}`}>No data for this month</p>
+        <div className="py-12 text-center">
+          <p className={`${subtext}`}>No data for this month</p>
+          <p className="mt-2 text-xs text-purple-muted">Log expenses in the Weekly tab — each week rolls up here automatically.</p>
+        </div>
       ) : (
         <>
           <div className="mb-6 grid grid-cols-1 gap-5 lg:grid-cols-[210px_1fr]">
