@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { apiFetch } from '../api';
+import { useNavigate, Link } from 'react-router-dom';
+import { apiFetch, primeCsrf } from '../api';
 
 function Field({ label, type = 'text', value, onChange, onKeyDown, autoComplete, placeholder }) {
   return (
@@ -158,6 +158,9 @@ function LoginForm({ onSubmit, loading, error }) {
         <Field label="Username" value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} autoComplete="username" placeholder="your username" />
         <Field label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} autoComplete="current-password" placeholder="••••••••" />
       </div>
+      <p className="mt-3 text-right text-xs">
+        <Link to="/forgot-password" className="text-brand-glow hover:underline">Forgot password?</Link>
+      </p>
       <SubmitButton loading={loading} onClick={submit}>{loading ? 'Signing in…' : 'Sign in'}</SubmitButton>
     </div>
   );
@@ -177,7 +180,7 @@ function RegisterForm({ onSubmit, loading, error }) {
         <div className="mt-4 animate-[shake_0.4s_ease] rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</div>
       )}
       <div className="mt-6 space-y-3.5">
-        <Field label="Username" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" placeholder="min 3 characters" />
+        <Field label="Username" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" placeholder="min 5 characters" />
         <Field label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" placeholder="you@email.com" />
         <Field label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} autoComplete="new-password" placeholder="••••••••" />
       </div>
@@ -196,6 +199,7 @@ export default function Login() {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', 'dark');
     if (!localStorage.getItem('darkMode')) localStorage.setItem('darkMode', 'true');
+    primeCsrf();
   }, []);
 
   useEffect(() => {

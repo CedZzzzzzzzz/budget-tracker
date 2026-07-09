@@ -15,7 +15,11 @@ from functools import wraps
 import google.generativeai as genai
 import logging
 import os
+import secrets
 from api.categorize import categorize_item, CATEGORY_LABELS, CATEGORIES
+from api.security import issue_csrf_token, verify_request_origin
+from api.email_service import send_password_reset_email, mail_configured
+from extensions import limiter
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +31,32 @@ except Exception:
     logger.warning("DejaVuSans font not loaded; PDF notes may fall back to default font")
 
 api = Blueprint("api", __name__, url_prefix="/api")
+
+CSRF_EXEMPT_ENDPOINTS = frozenset({
+    "api.forgot_password",
+    "api.reset_password",
+})
+
+
+@api.before_request
+def enforce_api_security():
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+
+    endpoint = request.endpoint or ""
+    if endpoint in CSRF_EXEMPT_ENDPOINTS:
+        if not verify_request_origin():
+            return jsonify({"error": "Invalid request origin"}), 403
+        return None
+
+    if not verify_request_origin():
+        return jsonify({"error": "Invalid request origin"}), 403
+
+    sent = request.headers.get("X-CSRF-Token", "")
+    expected = session.get("csrf_token")
+    if not expected or not sent or not secrets.compare_digest(sent, expected):
+        return jsonify({"error": "Invalid or missing CSRF token"}), 403
+    return None
 
 MAX_USERNAME_LEN = db.MAX_USERNAME_LEN
 MAX_EMAIL_LEN = db.MAX_EMAIL_LEN
@@ -108,25 +138,25 @@ DAYS_MAP = {
 }
 
 
-def _ps(name, font="Helvetica", size=12, color=TEXT_WHITE, align=TA_LEFT):
+def pdf_paragraph_style(name, font="Helvetica", size=12, color=TEXT_WHITE, align=TA_LEFT):
     return ParagraphStyle(name, fontName=font, fontSize=size,
                           textColor=color, alignment=align,
                           leading=size * 1.35)
 
 
-def _p(text, font="Helvetica", size=12, color=TEXT_WHITE, align=TA_LEFT):
-    return Paragraph(text, _ps("_", font, size, color, align))
+def pdf_paragraph(text, font="Helvetica", size=12, color=TEXT_WHITE, align=TA_LEFT):
+    return Paragraph(text, pdf_paragraph_style("_", font, size, color, align))
 
 
-def _section_label(text):
-    return _p(text, "Helvetica-BoldOblique", 11, PURPLE_LIGHT)
+def section_label(text):
+    return pdf_paragraph(text, "Helvetica-BoldOblique", 11, PURPLE_LIGHT)
 
 
-def _page_header(title, badge):
+def page_header(title, badge):
     usable = PAGE_W - 2 * MARGIN
     data = [[
-        _p(title, "Helvetica-Bold", 19, PURPLE_LIGHT),
-        _p(badge,  "Helvetica-Bold", 10, PURPLE_MAIN, TA_RIGHT),
+        pdf_paragraph(title, "Helvetica-Bold", 19, PURPLE_LIGHT),
+        pdf_paragraph(badge,  "Helvetica-Bold", 10, PURPLE_MAIN, TA_RIGHT),
     ]]
     t = Table(data, colWidths=[usable * 0.65, usable * 0.35])
     t.setStyle(TableStyle([
@@ -139,10 +169,10 @@ def _page_header(title, badge):
     return t
 
 
-def _data_table(headers, rows, col_widths):
-    data = [[_p(h, "Helvetica-Bold", 8, TEXT_WHITE) for h in headers]]
+def pdf_data_table(headers, rows, col_widths):
+    data = [[pdf_paragraph(h, "Helvetica-Bold", 8, TEXT_WHITE) for h in headers]]
     for row in rows:
-        data.append([_p(str(c), "Helvetica", 8, TEXT_LIGHT) for c in row])
+        data.append([pdf_paragraph(str(c), "Helvetica", 8, TEXT_LIGHT) for c in row])
     t = Table(data, colWidths=col_widths)
     t.setStyle(TableStyle([
         ("BACKGROUND",    (0, 0), (-1,  0), PURPLE_BORDER),
@@ -155,12 +185,12 @@ def _data_table(headers, rows, col_widths):
     return t
 
 
-def _total_row(label, value, col_widths):
+def pdf_total_row(label, value, col_widths):
     n = len(col_widths)
-    cells = [_p(f"<b>{label}</b>", "Helvetica-Bold", 8, PURPLE_LIGHT)]
+    cells = [pdf_paragraph(f"<b>{label}</b>", "Helvetica-Bold", 8, PURPLE_LIGHT)]
     for _ in range(n - 2):
-        cells.append(_p("", "Helvetica", 8))
-    cells.append(_p(f"<b>{value}</b>", "Helvetica-Bold", 9, GOLD))
+        cells.append(pdf_paragraph("", "Helvetica", 8))
+    cells.append(pdf_paragraph(f"<b>{value}</b>", "Helvetica-Bold", 9, GOLD))
     t = Table([cells], colWidths=col_widths)
     t.setStyle(TableStyle([
         ("SPAN",       (0, 0), (n - 2, 0)),
@@ -172,7 +202,7 @@ def _total_row(label, value, col_widths):
     return t
 
 
-def _stat_card(label, value, accent, w=1.65 * inch, h=0.70 * inch):
+def stat_card(label, value, accent, w=1.65 * inch, h=0.70 * inch):
     d = Drawing(w, h)
     d.add(Rect(0, 0,     w,  h, fillColor=BG_CARD,  strokeColor=accent, strokeWidth=1))
     d.add(Rect(0, h - 3, w,  3, fillColor=accent,   strokeColor=None))
@@ -181,7 +211,7 @@ def _stat_card(label, value, accent, w=1.65 * inch, h=0.70 * inch):
     return d
 
 
-def _bar_chart(labels, values, bar_colors, width=420, height=108):
+def bar_chart(labels, values, bar_colors, width=420, height=108):
     d = Drawing(width, height)
     d.add(Rect(0, 0, width, height, fillColor=BG_CARD,
                strokeColor=PURPLE_BORDER, strokeWidth=0.8))
@@ -211,9 +241,9 @@ def _bar_chart(labels, values, bar_colors, width=420, height=108):
     return d
 
 
-def _note_box(text, w=1.5 * inch, h=0.70 * inch):
+def note_box(text, w=1.5 * inch, h=0.70 * inch):
     return Table(
-        [[_p(text, "DejaVuSans", 7, TEXT_LIGHT)]],
+        [[pdf_paragraph(text, "DejaVuSans", 7, TEXT_LIGHT)]],
         colWidths=[w], rowHeights=[h],
         style=[
             ("BACKGROUND", (0, 0), (0, 0), BG_CARD),
@@ -225,7 +255,7 @@ def _note_box(text, w=1.5 * inch, h=0.70 * inch):
     )
 
 
-def _stack(*items):
+def pdf_stack(*items):
     t = Table([[item] for item in items])
     t.setStyle(TableStyle([
         ("VALIGN",        (0, 0), (-1, -1), "TOP"),
@@ -237,7 +267,7 @@ def _stack(*items):
     return t
 
 
-def _draw_bg(canv, doc):
+def draw_pdf_background(canv, doc):
     canv.saveState()
     canv.setFillColor(BG_DEEP)
     canv.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
@@ -250,7 +280,7 @@ def _draw_bg(canv, doc):
     canv.restoreState()
 
 
-def _make_doc(buffer):
+def make_pdf_doc(buffer):
     return SimpleDocTemplate(
         buffer, pagesize=landscape(letter),
         topMargin=MARGIN, bottomMargin=MARGIN,
@@ -258,28 +288,28 @@ def _make_doc(buffer):
     )
 
 
-def _build(elements):
+def build_pdf(elements):
     buffer = BytesIO()
-    doc = _make_doc(buffer)
-    doc.build(elements, onFirstPage=_draw_bg, onLaterPages=_draw_bg)
+    doc = make_pdf_doc(buffer)
+    doc.build(elements, onFirstPage=draw_pdf_background, onLaterPages=draw_pdf_background)
     buffer.seek(0)
     return buffer
 
 
-def _pdf_resp(buffer, filename):
+def pdf_response(buffer, filename):
     resp = make_response(buffer.read())
     resp.headers["Content-Type"]        = "application/pdf"
     resp.headers["Content-Disposition"] = f"attachment; filename={filename}"
     return resp
 
 
-def _two_col_body(left_content, right_content):
+def two_col_body(left_content, right_content):
     usable = PAGE_W - 2 * MARGIN
     lw = usable * 0.475
     rw = usable * 0.475
     gw = usable * 0.05
     body = Table(
-        [[_stack(*left_content), Spacer(gw, 1), _stack(*right_content)]],
+        [[pdf_stack(*left_content), Spacer(gw, 1), pdf_stack(*right_content)]],
         colWidths=[lw, gw, rw],
     )
     body.setStyle(TableStyle([
@@ -290,7 +320,7 @@ def _two_col_body(left_content, right_content):
     return body, lw, rw, gw
 
 
-def _stat_cards_row(*cards):
+def stat_cards_row(*cards):
     ct = Table([list(cards)], colWidths=[1.72 * inch] * len(cards),
                rowHeights=[0.74 * inch])
     ct.setStyle(TableStyle([
@@ -356,12 +386,89 @@ def get_current_day():
             "Friday", "Saturday", "Sunday"][datetime.now().weekday()]
 
 
+RESET_SENT_MESSAGE = (
+    "If an account exists for that email, reset instructions have been sent."
+)
+
+FORGOT_PASSWORD_LIMIT = (
+    "20 per hour" if os.environ.get("FLASK_ENV", "development") != "production" else "5 per hour"
+)
+RESET_PASSWORD_LIMIT = (
+    "30 per hour" if os.environ.get("FLASK_ENV", "development") != "production" else "10 per hour"
+)
+
+
+def app_base_url():
+    return os.environ.get("APP_BASE_URL", "http://localhost:5173").rstrip("/")
+
+
+@api.route("/csrf-token", methods=["GET"])
+def csrf_token():
+    return jsonify({"csrf_token": issue_csrf_token()})
+
+
+@api.route("/forgot-password", methods=["POST"])
+@limiter.limit(FORGOT_PASSWORD_LIMIT)
+def forgot_password():
+    try:
+        data = request.get_json() or {}
+        email = (data.get("email") or "").strip().lower()
+        if not email or "@" not in email:
+            return jsonify({"error": "Invalid email address."}), 400
+        if len(email) > MAX_EMAIL_LEN:
+            return jsonify({"error": "Invalid email address."}), 400
+
+        user = db.get_user_by_email(email)
+        if user:
+            raw_token = db.create_password_reset_token(user["id"])
+            reset_url = f"{app_base_url()}/reset-password?token={raw_token}"
+            if mail_configured() and not send_password_reset_email(email, reset_url):
+                return jsonify({"error": "Unable to send reset email. Try again later."}), 503
+            if not mail_configured():
+                send_password_reset_email(email, reset_url)
+
+        return jsonify({"success": True, "message": RESET_SENT_MESSAGE})
+    except Exception as e:
+        logger.exception("forgot_password failed: %s", e)
+        return internal_error()
+
+
+@api.route("/reset-password", methods=["POST"])
+@limiter.limit(RESET_PASSWORD_LIMIT)
+def reset_password():
+    try:
+        data = request.get_json() or {}
+        raw_token = (data.get("token") or "").strip()
+        password = (data.get("password") or "").strip()
+
+        if not raw_token:
+            return jsonify({"error": "Reset token is required."}), 400
+        is_valid, msg = validate_password(password)
+        if not is_valid:
+            return jsonify({"error": msg}), 400
+        if len(password) > MAX_PASSWORD_LEN:
+            return jsonify({"error": "Password is too long."}), 400
+
+        user_id = db.consume_password_reset_token(raw_token)
+        if not user_id:
+            return jsonify({"error": "Invalid or expired reset link."}), 400
+
+        if not db.update_user_password(user_id, password):
+            return jsonify({"error": "Unable to reset password."}), 500
+
+        return jsonify({"success": True, "message": "Password updated. You can sign in now."})
+    except Exception as e:
+        logger.exception("reset_password failed: %s", e)
+        return internal_error()
+
+
 @api.route("/register", methods=["POST"])
+@limiter.limit("5 per hour")
 def register():
     try:
         data     = request.get_json()
         username = data.get("username", "").strip()
-        email    = data.get("email",    "").strip()
+        email    = data.get("email",    "").strip().lower()
         password = data.get("password", "").strip()
 
         if not username or len(username) < 5:
@@ -384,6 +491,13 @@ def register():
 
         user_id = db.create_user(username, email, password)
         if user_id:
+            if not db.get_user_by_email(email):
+                logger.error(
+                    "register: user_id=%s was returned but email %s not found in database",
+                    user_id,
+                    email,
+                )
+                return jsonify({"error": "Registration failed"}), 500
             session["user_id"]  = user_id
             session["username"] = username
             return jsonify({"success": True, "username": username})
@@ -394,6 +508,7 @@ def register():
 
 
 @api.route("/login", methods=["POST"])
+@limiter.limit("10 per minute")
 def login():
     try:
         data     = request.get_json()
@@ -796,45 +911,45 @@ def export_pdf():
         elements = []
 
         badge = f"[ {week_start.strftime('%b %d')} \u2013 {week_end.strftime('%b %d, %Y').upper()} ]"
-        elements.append(_page_header("WEEKLY BUDGET TRACKER", badge))
+        elements.append(page_header("WEEKLY BUDGET TRACKER", badge))
         elements.append(Spacer(1, 10))
 
-        elements.append(_stat_cards_row(
-            _stat_card("Allowance",   f"{budget['allowance']:,.2f}", PURPLE_MAIN),
-            _stat_card("Total Spent", f"{t_spent:,.2f}",             PINK),
-            _stat_card("Remaining",   f"{remaining:,.2f}",           GREEN),
-            _stat_card("Days Logged", f"{len(db_rows)} / 7",               GOLD),
+        elements.append(stat_cards_row(
+            stat_card("Allowance",   f"{budget['allowance']:,.2f}", PURPLE_MAIN),
+            stat_card("Total Spent", f"{t_spent:,.2f}",             PINK),
+            stat_card("Remaining",   f"{remaining:,.2f}",           GREEN),
+            stat_card("Days Logged", f"{len(db_rows)} / 7",               GOLD),
         ))
         elements.append(Spacer(1, 10))
 
         left = [
-            _section_label("Income"),
-            _data_table(
+            section_label("Income"),
+            pdf_data_table(
                 ["Date", "Source", "Description", "Amount"],
                 [[week_start.strftime("%b %d"), "Allowance",
                   f"{username}'s weekly budget", f"{budget['allowance']:,.2f}"]],
                 icw,
             ),
-            _total_row("Total Income", f"{budget['allowance']:,.2f}", icw),
+            pdf_total_row("Total Income", f"{budget['allowance']:,.2f}", icw),
             Spacer(1, 8),
-            _section_label("Savings"),
-            _data_table(
+            section_label("Savings"),
+            pdf_data_table(
                 ["Method", "Amount Saved", "Notes"],
                 [["End balance",  f"{remaining:,.2f}", "Remaining this week"],
                  ["Disbursed",    f"{t_spent:,.2f}",  "All categories combined"]],
                 scw,
             ),
-            _total_row("Total Saved", f"{remaining:,.2f}", scw),
+            pdf_total_row("Total Saved", f"{remaining:,.2f}", scw),
         ]
 
         right = [
-            _section_label("Expenses"),
-            _data_table(["Date", "Category", "Description", "Amount"], exp_rows, ecw),
-            _total_row("Total Expenses", f"{t_spent:,.2f}", ecw),
+            section_label("Expenses"),
+            pdf_data_table(["Date", "Category", "Description", "Amount"], exp_rows, ecw),
+            pdf_total_row("Total Expenses", f"{t_spent:,.2f}", ecw),
         ]
 
         body = Table(
-            [[_stack(*left), Spacer(gw, 1), _stack(*right)]],
+            [[pdf_stack(*left), Spacer(gw, 1), pdf_stack(*right)]],
             colWidths=[lw, gw, rw],
         )
         body.setStyle(TableStyle([
@@ -847,7 +962,7 @@ def export_pdf():
 
         chart_w = int(lw + gw * 0.5)
         chart_cats = [c for c in CATEGORIES if cat_totals[c] > 0]
-        chart = _bar_chart(
+        chart = bar_chart(
             [CATEGORY_LABELS[c] for c in chart_cats],
             [cat_totals[c] for c in chart_cats],
             [CATEGORY_PDF_COLORS[c] for c in chart_cats],
@@ -858,9 +973,9 @@ def export_pdf():
         ai_notes = generate_budget_insights(budget["allowance"], totals, period="week")
         nw = rw * 0.30
         note_row = Table(
-            [[_note_box(ai_notes[0], w=nw),
-              _note_box(ai_notes[1], w=nw),
-              _note_box(ai_notes[2], w=nw)]],
+            [[note_box(ai_notes[0], w=nw),
+              note_box(ai_notes[1], w=nw),
+              note_box(ai_notes[2], w=nw)]],
             colWidths=[rw * 0.32] * 3,
         )
         note_row.setStyle(TableStyle([
@@ -870,9 +985,9 @@ def export_pdf():
         ]))
 
         bottom = Table(
-            [[_stack(_section_label("Expenses Chart"), Spacer(1, 4), chart),
+            [[pdf_stack(section_label("Expenses Chart"), Spacer(1, 4), chart),
               Spacer(gw * 0.5, 1),
-              _stack(_section_label("Notes"), Spacer(1, 4), note_row)]],
+              pdf_stack(section_label("Notes"), Spacer(1, 4), note_row)]],
             colWidths=[lw + gw * 0.5, gw * 0.5, rw],
         )
         bottom.setStyle(TableStyle([
@@ -882,7 +997,7 @@ def export_pdf():
         ]))
         elements.append(bottom)
 
-        return _pdf_resp(_build(elements), f"budget_{week_start}-{week_end}.pdf")
+        return pdf_response(build_pdf(elements), f"budget_{week_start}-{week_end}.pdf")
 
 
     except Exception as e:
@@ -928,47 +1043,47 @@ def export_monthly_pdf():
         elements = []
 
         badge = f"[ {datetime(year, month, 1).strftime('%B %Y').upper()} ]"
-        elements.append(_page_header("MONTHLY FINANCIAL TRACKER", badge))
+        elements.append(page_header("MONTHLY FINANCIAL TRACKER", badge))
         elements.append(Spacer(1, 10))
 
-        elements.append(_stat_cards_row(
-            _stat_card("Total Allowance", f"{t_allow:,.2f}", PURPLE_MAIN),
-            _stat_card("Total Spent",     f"{t_spent:,.2f}", PINK),
-            _stat_card("Total Saved",     f"{t_saved:,.2f}", GREEN),
-            _stat_card("Weeks Tracked",   f"{len(weeks)} wk(s)",   GOLD),
+        elements.append(stat_cards_row(
+            stat_card("Total Allowance", f"{t_allow:,.2f}", PURPLE_MAIN),
+            stat_card("Total Spent",     f"{t_spent:,.2f}", PINK),
+            stat_card("Total Saved",     f"{t_saved:,.2f}", GREEN),
+            stat_card("Weeks Tracked",   f"{len(weeks)} wk(s)",   GOLD),
         ))
         elements.append(Spacer(1, 10))
 
         left = [
-            _section_label("Income"),
-            _data_table(["Date", "Source", "Description", "Amount"],
+            section_label("Income"),
+            pdf_data_table(["Date", "Source", "Description", "Amount"],
                         income_rows, icw),
-            _total_row("Total Income", f"{t_allow:,.2f}", icw),
+            pdf_total_row("Total Income", f"{t_allow:,.2f}", icw),
             Spacer(1, 8),
-            _section_label("Savings"),
-            _data_table(
+            section_label("Savings"),
+            pdf_data_table(
                 ["Method", "Amount Saved", "Notes"],
                 [["Monthly balance", f"{t_saved:,.2f}", "Total saved this month"],
                  ["Total spent",     f"{t_spent:,.2f}", "All expenses combined"]],
                 scw,
             ),
-            _total_row("Total Saved", f"{t_saved:,.2f}", scw),
+            pdf_total_row("Total Saved", f"{t_saved:,.2f}", scw),
         ]
 
         right = [
-            _section_label("Expenses"),
-            _data_table(
+            section_label("Expenses"),
+            pdf_data_table(
                 ["Date", "Category", "Description", "Amount"],
                 ([["—", CATEGORY_LABELS[c], f"Monthly {CATEGORY_LABELS[c].lower()} total", f"{cat_totals[c]:,.2f}"]
                   for c in CATEGORIES if cat_totals[c] > 0]
                  or [["—", "—", "No expenses", "0.00"]]),
                 ecw,
             ),
-            _total_row("Total Expenses", f"{t_spent:,.2f}", ecw),
+            pdf_total_row("Total Expenses", f"{t_spent:,.2f}", ecw),
         ]
 
         body = Table(
-            [[_stack(*left), Spacer(gw, 1), _stack(*right)]],
+            [[pdf_stack(*left), Spacer(gw, 1), pdf_stack(*right)]],
             colWidths=[lw, gw, rw],
         )
         body.setStyle(TableStyle([
@@ -981,7 +1096,7 @@ def export_monthly_pdf():
 
         chart_w = int(lw + gw * 0.5)
         chart_cats = [c for c in CATEGORIES if cat_totals[c] > 0]
-        chart = _bar_chart(
+        chart = bar_chart(
             [CATEGORY_LABELS[c] for c in chart_cats],
             [cat_totals[c] for c in chart_cats],
             [CATEGORY_PDF_COLORS[c] for c in chart_cats],
@@ -992,9 +1107,9 @@ def export_monthly_pdf():
         ai_notes = generate_budget_insights(t_allow, totals, period="month")
         nw = rw * 0.30
         note_row = Table(
-            [[_note_box(ai_notes[0], w=nw),
-              _note_box(ai_notes[1], w=nw),
-              _note_box(ai_notes[2], w=nw)]],
+            [[note_box(ai_notes[0], w=nw),
+              note_box(ai_notes[1], w=nw),
+              note_box(ai_notes[2], w=nw)]],
             colWidths=[rw * 0.32] * 3,
         )
         note_row.setStyle(TableStyle([
@@ -1004,9 +1119,9 @@ def export_monthly_pdf():
         ]))
 
         bottom = Table(
-            [[_stack(_section_label("Expenses Chart"), Spacer(1, 4), chart),
+            [[pdf_stack(section_label("Expenses Chart"), Spacer(1, 4), chart),
               Spacer(gw * 0.5, 1),
-              _stack(_section_label("Notes"), Spacer(1, 4), note_row)]],
+              pdf_stack(section_label("Notes"), Spacer(1, 4), note_row)]],
             colWidths=[lw + gw * 0.5, gw * 0.5, rw],
         )
         bottom.setStyle(TableStyle([
@@ -1016,7 +1131,7 @@ def export_monthly_pdf():
         ]))
         elements.append(bottom)
 
-        return _pdf_resp(_build(elements), f"{year}_{month}.pdf")
+        return pdf_response(build_pdf(elements), f"{year}_{month}.pdf")
 
     except Exception as e:
         logger.exception("export_monthly_pdf failed: %s", e)

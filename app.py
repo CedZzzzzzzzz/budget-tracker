@@ -1,13 +1,15 @@
-from flask import Flask, render_template, session, redirect, url_for
+from flask import Flask, render_template, session, redirect, url_for, jsonify
 from flask_cors import CORS
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
 from config import config
 import database as db
 from api.routes import api, get_week_range
+from extensions import limiter
 
 
 
@@ -32,9 +34,19 @@ def create_app(config_name = "default"):
     else:
         CORS(app, supports_credentials=True)
 
+    limiter.init_app(app)
+
+    @app.errorhandler(429)
+    def rate_limit_exceeded(_e):
+        return jsonify({
+            "error": "Too many attempts. Please wait a few minutes and try again.",
+        }), 429
+
     app.register_blueprint(api)
 
     with app.app_context():
+        if not os.environ.get("DATABASE_URL"):
+            raise RuntimeError("DATABASE_URL must be set in .env")
         db.init_db()
 
     @app.route("/")

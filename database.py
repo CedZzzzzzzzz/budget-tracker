@@ -1,20 +1,56 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from werkzeug.security import generate_password_hash, check_password_hash
+import hashlib
 import os
+import secrets
+from datetime import datetime, timedelta
+from pathlib import Path
+from dotenv import load_dotenv
 
-DATABASE_URL = os.environ.get('DATABASE_URL')
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
+
+def get_database_url():
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        raise RuntimeError("DATABASE_URL is not set. Add it to your .env file.")
+    return url
+
+
+def db_connect():
+    return psycopg2.connect(get_database_url())
+
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 MAX_USERNAME_LEN = 50
 MAX_EMAIL_LEN = 255
 MAX_ITEM_NAME_LEN = 200
 
+_GMAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
+
+
+def clean_email(email):
+    return email.strip().lower().strip("\t\n\r")
+
+
+def normalize_email(email):
+    email = clean_email(email)
+    if "@" not in email:
+        return email
+    local, domain = email.rsplit("@", 1)
+    if domain in _GMAIL_DOMAINS:
+        local = local.split("+", 1)[0].replace(".", "")
+        domain = "gmail.com"
+    return f"{local}@{domain}"
+
+
 def get_db():
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     return conn
 
 def init_db():
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor()
 
     cursor.execute('''
@@ -92,18 +128,34 @@ def init_db():
         'CREATE INDEX IF NOT EXISTS idx_expense_items_expense_id ON expense_items(expense_id)'
     )
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            token_hash TEXT NOT NULL,
+            expires_at TIMESTAMP NOT NULL,
+            used_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    ''')
+    cursor.execute(
+        'CREATE INDEX IF NOT EXISTS idx_password_reset_token_hash '
+        'ON password_reset_tokens(token_hash)'
+    )
+
     conn.commit()
     conn.close()
     print("Database Initialized.")
 
 def create_user(username, email, password):
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = db_connect()
         cursor = conn.cursor()
         password_hash = generate_password_hash(password)
         cursor.execute(
             "INSERT INTO users (username, email, password_hash) VALUES (%s, %s, %s) RETURNING id",
-            (username, email, password_hash)
+            (username, normalize_email(email), password_hash)
         )
         user_id = cursor.fetchone()[0]
         conn.commit()
@@ -113,7 +165,7 @@ def create_user(username, email, password):
         return None
 
 def get_user_by_username(username):
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
     user = cursor.fetchone()
@@ -121,18 +173,108 @@ def get_user_by_username(username):
     return dict(user) if user else None
 
 def get_user_by_email(email):
-    conn = psycopg2.connect(DATABASE_URL)
+    email = clean_email(email)
+    conn = db_connect()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
-    cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
+    cursor.execute(
+        "SELECT * FROM users WHERE LOWER(btrim(email, E' \\t\\n\\r')) = LOWER(btrim(%s, E' \\t\\n\\r'))",
+        (email,),
+    )
     user = cursor.fetchone()
+    if user:
+        conn.close()
+        return dict(user)
+
+    _, _, domain = email.partition("@")
+    if domain in _GMAIL_DOMAINS:
+        needle = normalize_email(email)
+        cursor.execute(
+            "SELECT * FROM users WHERE LOWER(split_part(btrim(email, E' \\t\\n\\r'), '@', 2)) "
+            "IN ('gmail.com', 'googlemail.com')"
+        )
+        for row in cursor.fetchall():
+            if normalize_email(row["email"]) == needle:
+                conn.close()
+                return dict(row)
+
     conn.close()
-    return dict(user) if user else None
+    return None
 
 def verify_password(user, password):
     return check_password_hash(user["password_hash"], password)
 
+
+def hash_reset_token(raw_token):
+    return hashlib.sha256(raw_token.encode()).hexdigest()
+
+
+def invalidate_password_reset_tokens(user_id):
+    conn = db_connect()
+    cursor = conn.cursor()
+    cursor.execute(
+        'UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP '
+        'WHERE user_id = %s AND used_at IS NULL',
+        (user_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def create_password_reset_token(user_id):
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hash_reset_token(raw_token)
+    expires_at = datetime.utcnow() + timedelta(hours=1)
+    invalidate_password_reset_tokens(user_id)
+    conn = db_connect()
+    cursor = conn.cursor()
+    cursor.execute(
+        'INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) '
+        'VALUES (%s, %s, %s)',
+        (user_id, token_hash, expires_at),
+    )
+    conn.commit()
+    conn.close()
+    return raw_token
+
+
+def consume_password_reset_token(raw_token):
+    token_hash = hash_reset_token(raw_token)
+    conn = db_connect()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute(
+        'SELECT id, user_id FROM password_reset_tokens '
+        'WHERE token_hash = %s AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP',
+        (token_hash,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+    cursor.execute(
+        'UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = %s',
+        (row['id'],),
+    )
+    conn.commit()
+    conn.close()
+    return row['user_id']
+
+
+def update_user_password(user_id, password):
+    conn = db_connect()
+    cursor = conn.cursor()
+    password_hash = generate_password_hash(password)
+    cursor.execute(
+        'UPDATE users SET password_hash = %s WHERE id = %s',
+        (password_hash, user_id),
+    )
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
+
 def create_budget(user_id, week_start, week_end, allowance):
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO budgets (user_id, week_start_date, week_end_date, allowance) VALUES (%s, %s, %s, %s) RETURNING id",
@@ -144,7 +286,7 @@ def create_budget(user_id, week_start, week_end, allowance):
     return budget_id
 
 def update_budget(budget_id, user_id, allowance):
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor()
     cursor.execute(
         'UPDATE budgets SET allowance = %s WHERE id = %s AND user_id = %s',
@@ -156,7 +298,7 @@ def update_budget(budget_id, user_id, allowance):
     return updated
 
 def get_budget_by_week(user_id, week_start, week_end):
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute('''
         SELECT * FROM budgets
@@ -167,7 +309,7 @@ def get_budget_by_week(user_id, week_start, week_end):
     return dict(budget) if budget else None
 
 def get_budgets_by_month(user_id, start_date, end_date):
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute('''
         SELECT b.id, b.week_start_date, b.week_end_date, b.allowance,
@@ -185,7 +327,7 @@ def get_budgets_by_month(user_id, start_date, end_date):
 def get_monthly_expense_breakdown(user_id, start_date, end_date):
     from api.categorize import CATEGORIES
 
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     selects = ", ".join(f'COALESCE(SUM(e."{c}"), 0) AS "{c}"' for c in CATEGORIES)
     cursor.execute(f'''
@@ -202,7 +344,7 @@ def get_monthly_expense_breakdown(user_id, start_date, end_date):
 
 def add_expense(budget_id, day, expense_date, fare, food, other, total):
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = db_connect()
         cursor = conn.cursor()
         cursor.execute('''
         INSERT INTO expenses (budget_id, day, expense_date, fare, food, other, total)
@@ -215,7 +357,7 @@ def add_expense(budget_id, day, expense_date, fare, food, other, total):
         return False
 
 def delete_expense_by_day(budget_id, day):
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor()
     cursor.execute('DELETE FROM expenses WHERE budget_id = %s AND day = %s', (budget_id, day))
     deleted = cursor.rowcount > 0
@@ -224,7 +366,7 @@ def delete_expense_by_day(budget_id, day):
     return deleted
 
 def get_expenses_by_budget(budget_id):
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute('''
         SELECT * FROM expenses
@@ -245,7 +387,7 @@ def get_expenses_by_budget(budget_id):
 
 
 def get_expense_by_day(budget_id, day):
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute(
         'SELECT * FROM expenses WHERE budget_id = %s AND day = %s',
@@ -257,7 +399,7 @@ def get_expense_by_day(budget_id, day):
 
 
 def get_items_by_expense(expense_id):
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute(
         'SELECT * FROM expense_items WHERE expense_id = %s ORDER BY created_at',
@@ -269,7 +411,7 @@ def get_items_by_expense(expense_id):
 
 
 def get_items_by_budget(budget_id):
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute('''
         SELECT ei.*, e.day, e.id AS expense_id
@@ -297,7 +439,7 @@ def get_items_grouped_by_expense_id(budget_id):
 
 
 def expense_item_belongs_to_user(item_id, user_id):
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor()
     cursor.execute('''
         SELECT 1
@@ -311,7 +453,7 @@ def expense_item_belongs_to_user(item_id, user_id):
     return owned
 
 
-def _recalculate_expense_totals(cursor, expense_id):
+def recalculate_expense_totals(cursor, expense_id):
     from api.categorize import CATEGORIES
 
     selects = ", ".join(
@@ -337,7 +479,7 @@ def _recalculate_expense_totals(cursor, expense_id):
 
 
 def get_or_create_expense(budget_id, day, expense_date):
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute(
         'SELECT * FROM expenses WHERE budget_id = %s AND day = %s',
@@ -360,7 +502,7 @@ def get_or_create_expense(budget_id, day, expense_date):
 
 
 def add_expense_item(budget_id, day, expense_date, name, amount, category):
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute(
         'SELECT id FROM expenses WHERE budget_id = %s AND day = %s',
@@ -383,7 +525,7 @@ def add_expense_item(budget_id, day, expense_date, name, amount, category):
         RETURNING *
     ''', (expense_id, name, amount, category))
     item = dict(cursor.fetchone())
-    breakdown, total = _recalculate_expense_totals(cursor, expense_id)
+    breakdown, total = recalculate_expense_totals(cursor, expense_id)
     conn.commit()
     conn.close()
     return item, {**breakdown, 'total': total}
@@ -393,7 +535,7 @@ def delete_expense_item(item_id, user_id):
     if not expense_item_belongs_to_user(item_id, user_id):
         return False, None
 
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor()
     cursor.execute(
         'SELECT expense_id FROM expense_items WHERE id = %s', (item_id,),
@@ -412,7 +554,7 @@ def delete_expense_item(item_id, user_id):
         cursor.execute('DELETE FROM expenses WHERE id = %s', (expense_id,))
         totals = None
     else:
-        breakdown, total = _recalculate_expense_totals(cursor, expense_id)
+        breakdown, total = recalculate_expense_totals(cursor, expense_id)
         totals = {**breakdown, 'total': total}
 
     conn.commit()
@@ -424,7 +566,7 @@ def update_expense_item(item_id, user_id, name, amount, category):
     if not expense_item_belongs_to_user(item_id, user_id):
         return None, None
 
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = db_connect()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute(
         'SELECT expense_id FROM expense_items WHERE id = %s', (item_id,),
@@ -442,7 +584,7 @@ def update_expense_item(item_id, user_id, name, amount, category):
         RETURNING *
     ''', (name, amount, category, item_id))
     item = dict(cursor.fetchone())
-    breakdown, total = _recalculate_expense_totals(cursor, expense_id)
+    breakdown, total = recalculate_expense_totals(cursor, expense_id)
     conn.commit()
     conn.close()
     return item, {**breakdown, 'total': total}

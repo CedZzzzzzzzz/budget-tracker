@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { apiFetch, openPdf } from '../api';
+import { apiFetch, openPdf, primeCsrf } from '../api';
 import {
   categorizeItem,
   CATEGORIES,
@@ -1136,6 +1136,7 @@ export default function Dashboard() {
         setUsername(d.username);
       })
       .catch(() => navigate('/'));
+    primeCsrf();
     apiFetch('/api/current-week-info').then((r) => r.json()).then(setWeekInfo).catch(() => {});
     refreshBudget();
   }, [navigate, refreshBudget]);
