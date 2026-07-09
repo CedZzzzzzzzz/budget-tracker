@@ -11,7 +11,6 @@ def allowed_origins():
 
 
 def verify_request_origin():
-    """In production, require mutating requests to come from an allowed origin."""
     if os.environ.get("FLASK_ENV", "development") != "production":
         return True
 
@@ -61,7 +60,6 @@ def csrf_required(f):
 
 
 def origin_required(f):
-    """Origin check without CSRF (unauthenticated auth flows)."""
     @wraps(f)
     def decorated(*args, **kwargs):
         if request.method in ("GET", "HEAD", "OPTIONS"):

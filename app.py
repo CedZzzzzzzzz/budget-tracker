@@ -70,7 +70,7 @@ def create_app(config_name = "default"):
 
     @app.route("/health")
     def health():
-        return {"status": "Healthy"}, 200
+        return jsonify({"status": "Healthy"}), 200
 
     return app
 

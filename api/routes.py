@@ -18,7 +18,11 @@ import os
 import secrets
 from api.categorize import categorize_item, CATEGORY_LABELS, CATEGORIES
 from api.security import issue_csrf_token, verify_request_origin
-from api.email_service import send_password_reset_email, mail_configured
+from api.email_service import (
+    mail_configured,
+    send_password_reset_email,
+    send_password_reset_email_background,
+)
 from extensions import limiter
 
 logger = logging.getLogger(__name__)
@@ -422,9 +426,9 @@ def forgot_password():
         if user:
             raw_token = db.create_password_reset_token(user["id"])
             reset_url = f"{app_base_url()}/reset-password?token={raw_token}"
-            if mail_configured() and not send_password_reset_email(email, reset_url):
-                return jsonify({"error": "Unable to send reset email. Try again later."}), 503
-            if not mail_configured():
+            if mail_configured():
+                send_password_reset_email_background(email, reset_url)
+            else:
                 send_password_reset_email(email, reset_url)
 
         return jsonify({"success": True, "message": RESET_SENT_MESSAGE})

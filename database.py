@@ -18,7 +18,7 @@ def get_database_url():
 
 
 def db_connect():
-    return psycopg2.connect(get_database_url())
+    return psycopg2.connect(get_database_url(), connect_timeout=10)
 
 
 DATABASE_URL = os.environ.get("DATABASE_URL")

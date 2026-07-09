@@ -1,6 +1,7 @@
 import logging
 import os
 import smtplib
+import threading
 from email.message import EmailMessage
 
 logger = logging.getLogger(__name__)
@@ -11,6 +12,7 @@ _BREVO_SHORT_SMTP_KEY_LEN = 15
 
 BREVO_SMTP_HOST = "smtp-relay.brevo.com"
 BREVO_SMTP_PORT = 587
+SMTP_TIMEOUT_SEC = 15
 
 
 def smtp_password():
@@ -32,7 +34,6 @@ def looks_like_brevo_smtp_key(password):
 
 
 def validate_smtp_key_format(password):
-    """Log a hint when the key does not look like a Brevo SMTP key."""
     if not password:
         return
     host = smtp_host() or ""
@@ -53,7 +54,6 @@ def validate_smtp_key_format(password):
 
 
 def mail_configured():
-    """True when Brevo/SMTP is set up enough to send mail."""
     password = smtp_password()
     if password:
         validate_smtp_key_format(password)
@@ -61,13 +61,6 @@ def mail_configured():
 
 
 def send_password_reset_email(to_email, reset_url):
-    """
-    Send a password reset email via Brevo SMTP (or any SMTP).
-
-    Returns:
-        True  — email sent, or skipped intentionally (no SMTP; use console / API link)
-        False — SMTP was configured but sending failed
-    """
     subject = "Reset your Budget Tracker password"
     text_body = (
         "You requested a password reset for Budget Tracker.\n\n"
@@ -103,7 +96,7 @@ def send_password_reset_email(to_email, reset_url):
     use_tls = os.environ.get("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes")
 
     try:
-        with smtplib.SMTP(host, port, timeout=30) as server:
+        with smtplib.SMTP(host, port, timeout=SMTP_TIMEOUT_SEC) as server:
             server.ehlo()
             if use_tls:
                 server.starttls()
@@ -131,3 +124,12 @@ def send_password_reset_email(to_email, reset_url):
     except Exception:
         logger.exception("Failed to send password reset email to %s", to_email)
         return False
+
+
+def send_password_reset_email_background(to_email, reset_url):
+    threading.Thread(
+        target=send_password_reset_email,
+        args=(to_email, reset_url),
+        daemon=True,
+        name="password-reset-email",
+    ).start()
