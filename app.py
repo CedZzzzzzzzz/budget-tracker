@@ -19,8 +19,19 @@ def create_app(config_name = "default"):
 
     secret_key = os.environ.get('SECRET_KEY')
     if config_name == "production":
-        if not secret_key:
-            raise RuntimeError("SECRET_KEY must be set in production")
+        missing = [
+            name for name, val in (
+                ("SECRET_KEY", secret_key),
+                ("CORS_ORIGINS", os.environ.get("CORS_ORIGINS")),
+                ("DATABASE_URL", os.environ.get("DATABASE_URL")),
+            )
+            if not val
+        ]
+        if missing:
+            raise RuntimeError(
+                "Missing required environment variables in production: "
+                + ", ".join(missing)
+            )
         app.secret_key = secret_key
     else:
         app.secret_key = secret_key or os.urandom(32)
@@ -29,9 +40,7 @@ def create_app(config_name = "default"):
     if cors_origins:
         origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
         CORS(app, origins=origins, supports_credentials=True)
-    elif config_name == "production":
-        raise RuntimeError("CORS_ORIGINS must be set in production")
-    else:
+    elif config_name != "production":
         CORS(app, supports_credentials=True)
 
     limiter.init_app(app)
@@ -45,8 +54,6 @@ def create_app(config_name = "default"):
     app.register_blueprint(api)
 
     with app.app_context():
-        if not os.environ.get("DATABASE_URL"):
-            raise RuntimeError("DATABASE_URL must be set in .env")
         db.init_db()
 
     @app.route("/")
