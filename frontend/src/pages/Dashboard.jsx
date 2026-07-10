@@ -1,12 +1,15 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
-import { apiFetch, openPdf, primeCsrf } from '../api';
+import { useNavigate, useOutletContext } from 'react-router-dom';
+import { apiFetch, openPdf, primeCsrf, downloadCsv, runExport } from '../api';
+import { applyMutationPatch, applyDashboardData, patchComparisonFromTotals, patchAllowance } from '../utils/budgetPatch';
+import { CategoryDonutChart, WeekComparisonChart, SpendingByDayChart } from '../components/BudgetCharts';
+import UndoToast from '../components/UndoToast';
+import CategoryBadge from '../components/CategoryBadge';
 import {
   categorizeItem,
   CATEGORIES,
   CATEGORY_LABELS,
-  CATEGORY_ICONS,
   CATEGORY_COLORS,
 } from '../utils/categorize';
 import {
@@ -22,35 +25,30 @@ const svgProps = {
   strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', className: ICON,
 };
 
-const SunIcon = () => (
-  <svg {...svgProps}>
-    <circle cx="12" cy="12" r="4" />
-    <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-  </svg>
-);
-const MoonIcon = () => (
-  <svg {...svgProps}><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
-);
 const ExportIcon = () => (
   <svg {...svgProps}>
     <path d="M12 3v12" /><path d="m8 11 4 4 4-4" /><path d="M20 17v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2" />
   </svg>
 );
-const LogoutIcon = () => (
+const CsvIcon = () => (
   <svg {...svgProps}>
-    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5" /><path d="M21 12H9" />
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <path d="M14 2v6h6" /><path d="M8 13h8" /><path d="M8 17h8" /><path d="M8 9h2" />
   </svg>
 );
-const MenuIcon = () => (
-  <svg {...svgProps}><path d="M3 6h18M3 12h18M3 18h18" /></svg>
+const EditIcon = () => (
+  <svg {...svgProps} className="h-4 w-4">
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+  </svg>
 );
 
 function IconButton({ onClick, label, danger, className = '', children }) {
   const base =
-    'items-center justify-center gap-2 rounded-xl border h-10 px-3 text-sm font-medium transition active:scale-[0.97]';
+    'inline-flex items-center justify-center gap-2 rounded-xl border h-10 px-3 text-sm font-medium transition active:scale-[0.97]';
   const tone = danger
     ? 'border-red-400/25 bg-red-500/10 text-red-300 hover:bg-red-500/20 light:border-red-200 light:bg-white light:text-red-600 light:shadow-sm light:hover:bg-red-50'
-    : 'border-purple-primary/15 bg-purple-deep/40 text-purple-text-dim hover:border-purple-primary/40 hover:bg-purple-primary/12 hover:text-purple-text light:border-purple-border light:bg-white light:text-purple-text light:shadow-sm light:hover:border-purple-primary/40 light:hover:bg-purple-primary/[0.06]';
+    : 'glass-btn-ghost h-10 px-3 text-sm font-medium text-purple-text-dim hover:text-purple-text';
   return (
     <button type="button" onClick={onClick} title={label} aria-label={label} className={`${base} ${tone} ${className}`}>
       {children}
@@ -58,30 +56,74 @@ function IconButton({ onClick, label, danger, className = '', children }) {
   );
 }
 
-function MobileMenu({ open, onClose, darkMode, onTheme, showExport, onExport, onLogout, currentMonth, currentYear }) {
-  const itemCls = 'mb-2 block w-full rounded-xl px-4 py-3 text-left text-sm font-medium text-purple-text-dim transition hover:bg-purple-primary/10 hover:text-purple-text';
-  return (
-    <>
-      <div className={`fixed inset-0 z-[1999] bg-black/60 backdrop-blur-sm ${open ? 'block' : 'hidden'}`} onClick={onClose} />
-      <div className={`fixed right-0 top-0 z-[2000] h-screen w-72 border-l border-purple-primary/10 bg-purple-deep/95 p-6 backdrop-blur-xl transition-transform duration-300 ${open ? 'translate-x-0' : 'translate-x-full'}`}>
-        <div className="mb-8 flex items-center justify-between">
-          <span className="font-semibold text-purple-text">Menu</span>
-          <button type="button" className="text-purple-muted transition hover:text-purple-text" onClick={onClose}>✕</button>
+function EditableAllowanceRow({ allowance, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const start = () => {
+    setVal(String(allowance));
+    setEditing(true);
+  };
+
+  const cancel = () => setEditing(false);
+
+  const save = async () => {
+    const n = parseFloat(val);
+    if (!n || n <= 0) return alert('Enter a valid allowance');
+    setSaving(true);
+    try {
+      await onSave(n);
+      setEditing(false);
+    } catch {
+      alert('Failed to update allowance');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <div className={`${cardInner} space-y-2 px-4 py-3`}>
+        <label className={statLabel}>Weekly allowance</label>
+        <div className="flex flex-wrap gap-2">
+          <input
+            type="number"
+            className={`${input} min-w-[120px] flex-1`}
+            value={val}
+            onChange={(e) => setVal(e.target.value)}
+            min="0"
+            step="0.01"
+            onKeyDown={(e) => e.key === 'Enter' && save()}
+          />
+          <button type="button" className={`${btnPrimary} px-3 py-2 text-xs`} onClick={save} disabled={saving}>
+            {saving ? '…' : 'Save'}
+          </button>
+          <button type="button" className="px-2 py-2 text-xs text-purple-muted hover:text-purple-text" onClick={cancel}>
+            Cancel
+          </button>
         </div>
-        <button type="button" className={itemCls} onClick={() => { onTheme(); onClose(); }}>
-          {darkMode ? 'Light mode' : 'Dark mode'}
-        </button>
-        {showExport && (
-          <button type="button" className={itemCls} onClick={() => { onExport(); onClose(); }}>Export PDF</button>
-        )}
-        <button type="button" className={itemCls} onClick={() => { openPdf(`/api/export-monthly-pdf?month=${currentMonth}&year=${currentYear}`); onClose(); }}>
-          Monthly PDF
-        </button>
-        <button type="button" className={`${itemCls} text-red-300 hover:bg-red-500/10`} onClick={() => { onLogout(); onClose(); }}>
-          Logout
+        <p className="text-[10px] text-purple-muted">Update if you receive extra allowance mid-week</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`${cardInner} flex items-center justify-between px-4 py-3`}>
+      <span className={statLabel}>Allowance</span>
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-semibold text-purple-primary-light">₱{allowance.toFixed(2)}</span>
+        <button
+          type="button"
+          className="inline-flex text-purple-muted transition hover:text-purple-primary-light"
+          onClick={start}
+          aria-label="Edit allowance"
+          title="Edit allowance"
+        >
+          <EditIcon />
         </button>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -115,7 +157,7 @@ function SetupScreen({ weekInfo, onStart }) {
         <h2 className="mb-1 text-xl font-semibold text-purple-text">Start your week</h2>
         {weekInfo && (
           <p className={`mb-1 ${subtext}`}>
-            {weekInfo.week_start_formatted} – {weekInfo.week_end_formatted}
+            {weekInfo.week_start_formatted} to {weekInfo.week_end_formatted}
           </p>
         )}
         <p className="mb-6 text-xs text-purple-muted">Week starts Sunday</p>
@@ -138,15 +180,6 @@ function SetupScreen({ weekInfo, onStart }) {
         </div>
       </div>
     </div>
-  );
-}
-
-function CategoryBadge({ category }) {
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${CATEGORY_COLORS[category]}`}>
-      <span className="opacity-60">{CATEGORY_ICONS[category]}</span>
-      {CATEGORY_LABELS[category]}
-    </span>
   );
 }
 
@@ -213,7 +246,105 @@ function SectionTitle({ children, right, className = '' }) {
   );
 }
 
-function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
+function daysLeftInWeek(weekInfo) {
+  if (!weekInfo) return 1;
+  return Math.max(weekInfo.days_remaining, 1);
+}
+
+function formatDelta(amount) {
+  const sign = amount > 0 ? '+' : amount < 0 ? '−' : '';
+  return `${sign}₱${Math.abs(amount).toFixed(2)}`;
+}
+
+function WeekComparisonCard({ data }) {
+  if (!data?.current) return null;
+
+  const { current, previous, delta } = data;
+  const hasLastWeek = previous.has_budget;
+  const spentUp = delta.spent > 0;
+  const spentDown = delta.spent < 0;
+  const deltaTone = spentUp
+    ? 'text-amber-300'
+    : spentDown
+      ? 'text-emerald-300'
+      : 'text-purple-muted';
+
+  return (
+    <div className={`${card} p-5`}>
+      <SectionTitle className="mb-4">This week vs last week</SectionTitle>
+      <div className="grid grid-cols-2 gap-3">
+        <div className={`${cardInner} px-4 py-3`}>
+          <p className={statLabel}>This week</p>
+          <p className="mt-1 text-lg font-semibold text-purple-text">₱{current.spent.toFixed(2)}</p>
+          <p className="mt-0.5 text-xs text-purple-muted">of ₱{current.allowance.toFixed(2)}</p>
+        </div>
+        <div className={`${cardInner} px-4 py-3`}>
+          <p className={statLabel}>Last week</p>
+          {hasLastWeek ? (
+            <>
+              <p className="mt-1 text-lg font-semibold text-purple-text">₱{previous.spent.toFixed(2)}</p>
+              <p className="mt-0.5 text-xs text-purple-muted">of ₱{previous.allowance.toFixed(2)}</p>
+            </>
+          ) : (
+            <p className="mt-1 text-sm text-purple-muted">No budget logged</p>
+          )}
+        </div>
+      </div>
+      {hasLastWeek && (
+        <p className={`mt-3 text-center text-sm font-medium ${deltaTone}`}>
+          {formatDelta(delta.spent)} spent vs last week
+          {delta.spent_pct_change != null && (
+            <span className="text-purple-muted">
+              {' '}({delta.spent_pct_change > 0 ? '+' : ''}{delta.spent_pct_change}%)
+            </span>
+          )}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CategoryLimitAlerts({ categoryStatus }) {
+  if (!categoryStatus) return null;
+
+  const over = CATEGORIES.filter((c) => categoryStatus[c]?.over);
+  const warning = CATEGORIES.filter((c) => categoryStatus[c]?.warning && !categoryStatus[c]?.over);
+
+  if (!over.length && !warning.length) return null;
+
+  return (
+    <div className="space-y-2">
+      {over.map((c) => (
+        <div key={c} className="rounded-xl border border-red-400/25 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          <span className="font-medium">{CATEGORY_LABELS[c]}</span>
+          {' '}is over limit at ₱{categoryStatus[c].spent.toFixed(2)} of ₱{categoryStatus[c].limit.toFixed(2)}
+        </div>
+      ))}
+      {warning.map((c) => (
+        <div key={c} className="rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          <span className="font-medium">{CATEGORY_LABELS[c]}</span>
+          {' '}at {categoryStatus[c].pct}% of limit (₱{categoryStatus[c].spent.toFixed(2)} / ₱{categoryStatus[c].limit.toFixed(2)})
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CategoryLimitRow({ category, spent, status }) {
+  if (!status?.limit) return null;
+  const pct = Math.min(status.pct || 0, 100);
+  const barColor = status.over ? 'bg-red-400' : pct >= 80 ? 'bg-amber-400' : 'bg-purple-primary';
+  return (
+    <div className="glass-track mt-1.5 h-1.5 overflow-hidden rounded-full">
+      <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+function WeeklyTracker({
+  weekInfo, allowance, expenses, totals, comparison, categoryStatus, categoryRules,
+  onBudgetPatch, onAllowanceChange, onItemDeleted,
+}) {
   const today = new Date().getDay();
   const [selDay, setSelDay] = useState(DAYS[today]);
   const [itemName, setItemName] = useState('');
@@ -226,14 +357,16 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
   const [editCategory, setEditCategory] = useState('other');
   const [savingEdit, setSavingEdit] = useState(false);
   const [modalDay, setModalDay] = useState(null);
+  const logExpenseRef = useRef(null);
 
   useEffect(() => {
-    if (itemName.trim()) setCategory(categorizeItem(itemName));
-  }, [itemName]);
+    if (itemName.trim()) setCategory(categorizeItem(itemName, categoryRules));
+  }, [itemName, categoryRules]);
 
   const selectDay = (day, i) => {
     if (i > today) return;
     setSelDay(day);
+    setEditingId(null);
     setItemName('');
     setItemAmount('');
     setCategory('other');
@@ -255,10 +388,11 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
         body: JSON.stringify({ day: selDay, name, amount, category }),
       });
       if (r.ok) {
+        const d = await r.json();
         setItemName('');
         setItemAmount('');
         setCategory('other');
-        onRefresh();
+        onBudgetPatch(d);
       } else {
         const d = await r.json();
         alert(d.error || 'Failed to add item');
@@ -270,22 +404,31 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
     }
   };
 
-  const deleteItem = async (itemId) => {
-    if (!confirm('Remove this item?')) return;
+  const deleteItem = async (item) => {
     try {
-      await apiFetch(`/api/delete-expense-item/${itemId}`, { method: 'DELETE' });
-      if (editingId === itemId) setEditingId(null);
-      onRefresh();
+      const r = await apiFetch(`/api/delete-expense-item/${item.id}`, { method: 'DELETE' });
+      if (r.ok) {
+        const d = await r.json();
+        if (editingId === item.id) setEditingId(null);
+        onBudgetPatch(d);
+        if (d.deleted_item && onItemDeleted) {
+          onItemDeleted({ ...d.deleted_item, day: d.day || selDay });
+        }
+      }
     } catch {
       alert('Server error');
     }
   };
 
-  const startEdit = (item) => {
+  const startEdit = (item, dayForEdit = selDay) => {
+    if (dayForEdit) setSelDay(dayForEdit);
     setEditingId(item.id);
     setEditName(item.name);
     setEditAmount(String(item.amount));
     setEditCategory(item.category);
+    requestAnimationFrame(() => {
+      logExpenseRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   };
 
   const cancelEdit = () => {
@@ -308,7 +451,7 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
       });
       if (r.ok) {
         cancelEdit();
-        onRefresh();
+        onBudgetPatch(await r.json());
       } else {
         const d = await r.json();
         alert(d.error || 'Failed to update item');
@@ -323,7 +466,7 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
   const renderExpenseItem = (item) => {
     if (editingId === item.id) {
       return (
-        <div key={item.id} className="space-y-3 rounded-xl bg-purple-deep/40 px-3 py-2.5">
+        <div key={item.id} className="space-y-3 glass-surface rounded-xl px-3 py-2.5">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_100px]">
             <input type="text" className={input} value={editName} onChange={(e) => setEditName(e.target.value)} />
             <input type="number" className={input} min="0" step="0.01" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} />
@@ -332,7 +475,7 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
             <select
               value={editCategory}
               onChange={(e) => setEditCategory(e.target.value)}
-              className="rounded-lg border border-purple-primary/15 bg-purple-deep/60 px-2 py-1 text-xs text-purple-text-dim"
+              className="glass-input rounded-lg px-2 py-1 text-xs text-purple-text-dim"
             >
               {CATEGORIES.map((c) => (
                 <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
@@ -350,17 +493,17 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
     }
 
     return (
-      <div key={item.id} className="flex items-center justify-between rounded-xl bg-purple-deep/40 px-3 py-2.5">
+      <div key={item.id} className="flex items-center justify-between glass-surface rounded-xl px-3 py-2.5">
         <div className="flex items-center gap-2">
           <CategoryBadge category={item.category} />
           <span className="text-sm text-purple-text-dim">{item.name}</span>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-purple-primary-light">₱{item.amount.toFixed(2)}</span>
-          <button type="button" className="text-xs text-purple-muted transition hover:text-purple-primary-light" onClick={() => startEdit(item)} aria-label="Edit item">
-            Edit
+          <button type="button" className="inline-flex text-purple-muted transition hover:text-purple-primary-light" onClick={() => startEdit(item)} aria-label="Edit item" title="Edit">
+            <EditIcon />
           </button>
-          <button type="button" className="text-xs text-purple-muted transition hover:text-red-400" onClick={() => deleteItem(item.id)} aria-label="Remove item">
+          <button type="button" className="text-xs text-purple-muted transition hover:text-red-400" onClick={() => deleteItem(item)} aria-label="Remove item">
             ✕
           </button>
         </div>
@@ -371,15 +514,14 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
   const deleteDay = async (day) => {
     if (!confirm(`Delete all expenses for ${day}?`)) return;
     try {
-      await apiFetch(`/api/delete-expense/${day}`, { method: 'DELETE' });
-      onRefresh();
+      const r = await apiFetch(`/api/delete-expense/${day}`, { method: 'DELETE' });
+      if (r.ok) onBudgetPatch(await r.json());
     } catch {
       alert('Server error');
     }
   };
 
   const pct = allowance ? (totals.spent / allowance) * 100 : 0;
-  const barColor = pct > 100 ? 'bg-red-400' : pct > 80 ? 'bg-amber-400' : 'bg-purple-primary';
 
   const expenseRows = DAYS.map((day, i) => {
     const e = expenses[day];
@@ -395,7 +537,7 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
           <div className="flex-1 px-6 py-4 text-center">
             <p className={statLabel}>Current week</p>
             <p className="mt-0.5 text-sm font-medium text-purple-text">
-              {weekInfo.week_start_formatted} – {weekInfo.week_end_formatted}
+              {weekInfo.week_start_formatted} to {weekInfo.week_end_formatted}
             </p>
           </div>
           <div className="flex-1 px-6 py-4 text-center">
@@ -409,199 +551,224 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[260px_1fr]">
+      {allowance > 0 && comparison && (
+        <WeekComparisonCard data={comparison} />
+      )}
+
+      <CategoryLimitAlerts categoryStatus={categoryStatus} />
+
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         <div className={`${card} p-5`}>
           <SectionTitle className="mb-4">Overview</SectionTitle>
-          <div className="mb-5 flex flex-col items-center rounded-2xl bg-purple-deep/40 py-5">
+          <EditableAllowanceRow allowance={allowance} onSave={onAllowanceChange} />
+          <div className="my-4 flex flex-col items-center glass-well py-5">
             <RingProgress value={pct} />
-            <p className="mt-3 text-center text-xs text-purple-muted">
-              <span className="font-semibold text-purple-text">₱{totals.spent.toFixed(2)}</span> of ₱{allowance.toFixed(2)}
-            </p>
           </div>
-          <div className="space-y-2">
-            {[
-              { label: 'Allowance', value: allowance, color: 'text-purple-primary-light' },
-              { label: 'Remaining', value: totals.remaining, color: totals.remaining < 0 ? 'text-red-400' : 'text-emerald-400' },
-              { label: 'Days logged', value: `${Object.keys(expenses).length}/7`, color: 'text-purple-text' },
-            ].map(({ label: l, value, color }) => (
-              <div key={l} className={`${cardInner} flex items-center justify-between px-4 py-3`}>
-                <span className={statLabel}>{l}</span>
-                <span className={`text-sm font-semibold ${color}`}>
-                  {typeof value === 'number' ? `₱${value.toFixed(2)}` : value}
-                </span>
-              </div>
-            ))}
+          <div className="grid grid-cols-2 gap-2">
+            <div className={`${cardInner} px-4 py-3`}>
+              <p className={statLabel}>Spent</p>
+              <p className="mt-1 text-lg font-semibold text-purple-text">₱{totals.spent.toFixed(2)}</p>
+            </div>
+            <div className={`${cardInner} px-4 py-3`}>
+              <p className={statLabel}>Remaining</p>
+              <p className={`mt-1 text-lg font-semibold ${totals.remaining < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                ₱{totals.remaining.toFixed(2)}
+              </p>
+            </div>
+          </div>
+          <div className={`${cardInner} mt-2 flex items-center justify-between px-4 py-3`}>
+            <span className={statLabel}>Days logged</span>
+            <span className="text-sm font-semibold text-purple-text">{Object.keys(expenses).length}/7</span>
           </div>
           {totals.remaining < 0 && (
             <p className="mt-3 text-center text-xs font-medium text-red-400">Over budget</p>
           )}
+          {weekInfo && totals.remaining > 0 && (
+            <p className="mt-3 text-center text-xs text-purple-muted">
+              About ₱{(totals.remaining / daysLeftInWeek(weekInfo)).toFixed(2)} per day for {daysLeftInWeek(weekInfo)} day{daysLeftInWeek(weekInfo) === 1 ? '' : 's'} left
+            </p>
+          )}
         </div>
 
-        <div className="space-y-5">
-          {totals.spent === 0 && (
-            <div className={`${card} p-5 text-center`}>
-              <p className="text-sm font-medium text-purple-text">No expenses yet this week</p>
-              <p className={`mt-1 ${subtext}`}>Select a day below and add your first item — fare, food, groceries, and more.</p>
-            </div>
-          )}
-
-          {totals.spent > 0 && (
-            <div className={`${card} p-5`}>
-              <SectionTitle
-                className="mb-4"
-                right={<span className="text-sm font-semibold text-purple-primary-light">₱{totals.spent.toFixed(2)}</span>}
-              >
-                Spending this week
-              </SectionTitle>
-              <MiniBars data={DAYS.map((d) => ({ label: d, short: d.slice(0, 2), value: expenses[d]?.total || 0 }))} />
-            </div>
-          )}
-
-          <div className={`${card} p-5`}>
-            <SectionTitle className="mb-4">Log expense</SectionTitle>
-            <p className={`mb-2.5 ${statLabel}`}>Select day</p>
-            <div className="mb-5 grid grid-cols-7 gap-1.5">
-              {DAYS.map((day, i) => {
-                const disabled = i > today;
-                const active = selDay === day;
-                const isToday = i === today;
-                return (
-                  <button
-                    key={day}
-                    type="button"
-                    className={`relative flex items-center justify-center rounded-lg py-2 text-xs font-medium transition ${
-                      active
-                        ? 'bg-purple-primary text-white shadow-glow'
-                        : disabled
-                          ? 'cursor-not-allowed text-purple-muted/40'
-                          : `bg-purple-deep/60 text-purple-soft hover:bg-purple-primary/20 hover:text-purple-text ${isToday ? 'ring-1 ring-inset ring-purple-primary/50' : ''}`
-                    }`}
-                    onClick={() => selectDay(day, i)}
-                    disabled={disabled}
-                  >
-                    {day.slice(0, 3)}
-                  </button>
-                );
-              })}
-            </div>
-
-            {selDay && (
-              <div className={`${cardInner} space-y-4 p-4`}>
-                <p className={subtext}>
-                  Adding for <span className="font-medium text-purple-primary-light">{selDay}</span>
-                </p>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_110px_auto]">
-                  <div>
-                    <label className={label}>Item</label>
-                    <input type="text" className={input} placeholder="Jeepney fare, lunch…" value={itemName} onChange={(e) => setItemName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addItem()} />
-                  </div>
-                  <div>
-                    <label className={label}>Amount</label>
-                    <input type="number" className={input} placeholder="0" min="0" step="0.01" value={itemAmount} onChange={(e) => setItemAmount(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addItem()} />
-                  </div>
-                  <div className="flex items-end">
-                    <button type="button" className={`${btnPrimary} w-full sm:w-auto`} onClick={addItem} disabled={adding}>
-                      {adding ? '…' : 'Add'}
-                    </button>
-                  </div>
-                </div>
-
-                {itemName.trim() && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-purple-muted">Category</span>
-                    <CategoryBadge category={category} />
-                    <select
-                      value={category}
-                      onChange={(e) => setCategory(e.target.value)}
-                      className="rounded-lg border border-purple-primary/15 bg-purple-deep/60 px-2 py-1 text-xs text-purple-text-dim"
-                    >
-                      {CATEGORIES.map((c) => (
-                        <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                {dayItems.length > 0 && (
-                  <div className="space-y-2">
-                    <p className={statLabel}>Items</p>
-                    {dayItems.map((item) => renderExpenseItem(item))}
-                  </div>
-                )}
-
-                {dayItems.length === 0 && (
-                  <p className={`text-center text-xs ${subtext}`}>No items for {selDay} yet — add one above.</p>
-                )}
-
-                <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-purple-primary/10 pt-3 text-xs text-purple-muted">
-                  {CATEGORIES.filter((c) => (dayTotals[c] || 0) > 0).map((c) => (
-                    <span key={c}>{CATEGORY_LABELS[c]} ₱{(dayTotals[c] || 0).toFixed(2)}</span>
-                  ))}
-                  <span className="ml-auto font-semibold text-purple-text">₱{(dayTotals.total || 0).toFixed(2)}</span>
-                </div>
-              </div>
-            )}
+        <div ref={logExpenseRef} className={`${card} p-5 scroll-mt-6`}>
+          <SectionTitle className="mb-4">Log expense</SectionTitle>
+          <p className={`mb-2.5 ${statLabel}`}>Select day</p>
+          <div className="mb-5 grid grid-cols-7 gap-1.5">
+            {DAYS.map((day, i) => {
+              const disabled = i > today;
+              const active = selDay === day;
+              const isToday = i === today;
+              return (
+                <button
+                  key={day}
+                  type="button"
+                  className={`relative flex items-center justify-center rounded-full py-2 text-xs font-medium transition ${
+                    active
+                      ? 'bg-purple-primary text-white shadow-glow'
+                      : disabled
+                        ? 'cursor-not-allowed text-purple-muted/40'
+                        : `glass-surface text-purple-soft hover:bg-purple-primary/20 hover:text-purple-text ${isToday ? 'ring-1 ring-inset ring-purple-primary/50' : ''}`
+                  }`}
+                  onClick={() => selectDay(day, i)}
+                  disabled={disabled}
+                >
+                  {day.slice(0, 2)}
+                </button>
+              );
+            })}
           </div>
 
-          {expenseRows.length > 0 && (
-            <div className={`${card} p-5`}>
-              <SectionTitle className="mb-4">Weekly summary</SectionTitle>
-              <div className="mb-5 space-y-2">
-                {expenseRows.map(({ day, e, isToday }) => (
-                  e ? (
-                    <button
-                      key={day}
-                      type="button"
-                      onClick={() => setModalDay(day)}
-                      className={`${cardInner} w-full p-4 text-left transition hover:border-purple-primary/30`}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="flex items-center gap-2 text-sm font-medium text-purple-text">
-                          {day}
-                          {isToday && <span className="rounded-full bg-purple-primary/20 px-2 py-0.5 text-[10px] font-medium text-purple-primary-light">today</span>}
-                        </span>
-                        <span className="flex items-center gap-2.5">
-                          {e.items?.length > 0 && (
-                            <span className="rounded-full bg-purple-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-purple-primary-light">{e.items.length}</span>
-                          )}
-                          <span className="font-semibold text-purple-primary-light">₱{e.total.toFixed(2)}</span>
-                          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 text-purple-muted" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M9 6l6 6-6 6" />
-                          </svg>
-                        </span>
-                      </div>
-                      {CATEGORIES.some((c) => (e[c] || 0) > 0) && (
-                        <div className="mt-2.5 flex flex-wrap gap-1.5">
-                          {CATEGORIES
-                            .filter((c) => (e[c] || 0) > 0)
-                            .map((c) => <CategoryBadge key={c} category={c} />)}
-                        </div>
-                      )}
-                    </button>
-                  ) : (
-                    <div key={day} className="flex items-center justify-between rounded-xl border border-dashed border-purple-primary/10 px-4 py-2.5 text-sm text-purple-muted/50">
-                      <span>{day}</span>
-                      <span className="text-xs italic">No expenses</span>
-                    </div>
-                  )
-                ))}
+          {selDay && (
+            <div className={`${cardInner} space-y-4 p-4`}>
+              <p className={subtext}>
+                Adding for <span className="font-medium text-purple-primary-light">{selDay}</span>
+              </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_110px_auto]">
+                <div>
+                  <label className={label}>Item</label>
+                  <input type="text" className={input} placeholder="Jeepney fare, lunch…" value={itemName} onChange={(e) => setItemName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addItem()} />
+                </div>
+                <div>
+                  <label className={label}>Amount</label>
+                  <input type="number" className={input} placeholder="0" min="0" step="0.01" value={itemAmount} onChange={(e) => setItemAmount(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addItem()} />
+                </div>
+                <div className="flex items-end">
+                  <button type="button" className={`${btnPrimary} w-full sm:w-auto`} onClick={addItem} disabled={adding}>
+                    {adding ? '…' : 'Add'}
+                  </button>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-2 border-t border-purple-primary/10 pt-4 sm:grid-cols-3">
-                {CATEGORIES.filter((c) => (totals[c] || 0) > 0).map((c) => (
-                  <div key={c} className={`${cardInner} flex items-center justify-between gap-2 px-3 py-2.5`}>
-                    <CategoryBadge category={c} />
-                    <span className="text-sm font-semibold text-purple-text">₱{(totals[c] || 0).toFixed(2)}</span>
-                  </div>
+
+              {itemName.trim() && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-purple-muted">Category</span>
+                  <CategoryBadge category={category} />
+                  <select
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    className="glass-input rounded-lg px-2 py-1 text-xs text-purple-text-dim"
+                  >
+                    {CATEGORIES.map((c) => (
+                      <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {dayItems.length > 0 && (
+                <div className="space-y-2">
+                  <p className={statLabel}>Items</p>
+                  {dayItems.map((item) => renderExpenseItem(item))}
+                </div>
+              )}
+
+              {dayItems.length === 0 && (
+                <p className={`text-center text-xs ${subtext}`}>No items for {selDay} yet. Add one above.</p>
+              )}
+
+              <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-purple-primary/10 pt-3 text-xs text-purple-muted">
+                {CATEGORIES.filter((c) => (dayTotals[c] || 0) > 0).map((c) => (
+                  <span key={c}>{CATEGORY_LABELS[c]} ₱{(dayTotals[c] || 0).toFixed(2)}</span>
                 ))}
-              </div>
-              <div className="mt-3 flex items-center justify-between rounded-xl bg-purple-primary/10 px-4 py-3">
-                <span className="text-sm font-medium text-purple-soft">Total spent</span>
-                <span className="text-lg font-semibold text-purple-primary-light">₱{totals.spent.toFixed(2)}</span>
+                <span className="ml-auto font-semibold text-purple-text">₱{(dayTotals.total || 0).toFixed(2)}</span>
               </div>
             </div>
           )}
         </div>
       </div>
+
+      {totals.spent === 0 && (
+        <div className={`${card} p-5 text-center`}>
+          <p className="text-sm font-medium text-purple-text">No expenses yet this week</p>
+          <p className={`mt-1 ${subtext}`}>Select a day above and add your first item: fare, food, groceries, and more.</p>
+        </div>
+      )}
+
+      {totals.spent > 0 && (
+        <div className={`${card} p-5`}>
+          <SectionTitle className="mb-4">Spending insights</SectionTitle>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <CategoryDonutChart totals={totals} />
+            {comparison?.previous?.has_budget ? (
+              <WeekComparisonChart comparison={comparison} />
+            ) : (
+              <div className="glass-inner flex min-h-[200px] items-center justify-center rounded-xl p-4 text-sm text-purple-muted">
+                Log a full week to compare with last week
+              </div>
+            )}
+          </div>
+          <div className="mt-3">
+            <SpendingByDayChart expenses={expenses} todayIndex={today} />
+          </div>
+        </div>
+      )}
+
+      {expenseRows.length > 0 && (
+        <div className={`${card} p-5`}>
+          <SectionTitle className="mb-4">Weekly summary</SectionTitle>
+          <div className="mb-5 space-y-2">
+            {expenseRows.map(({ day, e, isToday }) => (
+              e ? (
+                <button
+                  key={day}
+                  type="button"
+                  onClick={() => setModalDay(day)}
+                  className={`${cardInner} w-full p-4 text-left transition hover:border-purple-primary/30`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-2 text-sm font-medium text-purple-text">
+                      {day}
+                      {isToday && <span className="rounded-full bg-purple-primary/20 px-2 py-0.5 text-[10px] font-medium text-purple-primary-light">today</span>}
+                    </span>
+                    <span className="flex items-center gap-2.5">
+                      {e.items?.length > 0 && (
+                        <span className="rounded-full bg-purple-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-purple-primary-light">{e.items.length}</span>
+                      )}
+                      <span className="font-semibold text-purple-primary-light">₱{e.total.toFixed(2)}</span>
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 text-purple-muted" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M9 6l6 6-6 6" />
+                      </svg>
+                    </span>
+                  </div>
+                  {CATEGORIES.some((c) => (e[c] || 0) > 0) && (
+                    <div className="mt-2.5 flex flex-wrap gap-1.5">
+                      {CATEGORIES
+                        .filter((c) => (e[c] || 0) > 0)
+                        .map((c) => <CategoryBadge key={c} category={c} />)}
+                    </div>
+                  )}
+                </button>
+              ) : (
+                <div key={day} className="flex items-center justify-between rounded-xl border border-dashed border-purple-primary/10 px-4 py-2.5 text-sm text-purple-muted/50">
+                  <span>{day}</span>
+                  <span className="text-xs italic">No expenses</span>
+                </div>
+              )
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2 border-t border-purple-primary/10 pt-4 sm:grid-cols-3">
+            {CATEGORIES.filter((c) => (totals[c] || 0) > 0 || categoryStatus?.[c]?.limit).map((c) => (
+              <div key={c} className={`${cardInner} px-3 py-2.5`}>
+                <div className="flex items-center justify-between gap-2">
+                  <CategoryBadge category={c} />
+                  <span className="text-sm font-semibold text-purple-text">₱{(totals[c] || 0).toFixed(2)}</span>
+                </div>
+                {categoryStatus?.[c]?.limit && (
+                  <p className="mt-1 text-[10px] text-purple-muted">
+                    Limit ₱{categoryStatus[c].limit.toFixed(2)}
+                    {categoryStatus[c].over && <span className="ml-1 text-red-400">over</span>}
+                  </p>
+                )}
+                <CategoryLimitRow category={c} spent={totals[c] || 0} status={categoryStatus?.[c]} />
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex items-center justify-between rounded-xl bg-purple-primary/10 px-4 py-3">
+            <span className="text-sm font-medium text-purple-soft">Total spent</span>
+            <span className="text-lg font-semibold text-purple-primary-light">₱{totals.spent.toFixed(2)}</span>
+          </div>
+        </div>
+      )}
 
       {modalDay && expenses[modalDay] && (
         <DayDetailModal
@@ -609,7 +776,7 @@ function WeeklyTracker({ weekInfo, allowance, expenses, totals, onRefresh }) {
           expense={expenses[modalDay]}
           isToday={DAYS[today] === modalDay}
           onDeleteItem={deleteItem}
-          onEditItem={startEdit}
+          onEditItem={(item, editDay) => startEdit(item, editDay || modalDay)}
           onDeleteDay={deleteDay}
           onClose={() => setModalDay(null)}
         />
@@ -654,7 +821,7 @@ function DayDetailModal({ day, expense, isToday, onDeleteItem, onEditItem, onDel
               {isToday && <span className="rounded-full bg-purple-primary/20 px-2 py-0.5 text-[10px] font-medium text-purple-primary-light">today</span>}
             </h3>
             <p className="mt-0.5 text-xs text-purple-muted">
-              {items.length} {items.length === 1 ? 'item' : 'items'} · ₱{total.toFixed(2)}
+              {items.length} {items.length === 1 ? 'item' : 'items'}, ₱{total.toFixed(2)}
             </p>
           </div>
           <button
@@ -687,16 +854,17 @@ function DayDetailModal({ day, expense, isToday, onDeleteItem, onEditItem, onDel
                           <span className="text-sm font-medium text-purple-primary-light">₱{item.amount.toFixed(2)}</span>
                           <button
                             type="button"
-                            className="text-xs text-purple-muted transition hover:text-purple-primary-light"
-                            onClick={() => { onEditItem(item); onClose(); }}
+                            className="inline-flex text-purple-muted transition hover:text-purple-primary-light"
+                            onClick={() => { onEditItem(item, day); onClose(); }}
                             aria-label="Edit item"
+                            title="Edit"
                           >
-                            Edit
+                            <EditIcon />
                           </button>
                           <button
                             type="button"
                             className="text-xs text-purple-muted transition hover:text-red-400"
-                            onClick={() => onDeleteItem(item.id)}
+                            onClick={() => onDeleteItem(item)}
                             aria-label="Remove item"
                           >
                             ✕
@@ -736,7 +904,8 @@ function WeekDetailModal({ weekStart, weekLabel, onClose }) {
   const toggleDay = (day) =>
     setOpenDays((prev) => {
       const next = new Set(prev);
-      next.has(day) ? next.delete(day) : next.add(day);
+      if (next.has(day)) next.delete(day);
+      else next.add(day);
       return next;
     });
 
@@ -798,7 +967,7 @@ function WeekDetailModal({ weekStart, weekLabel, onClose }) {
             <h3 className="text-lg font-semibold tracking-tight text-purple-text">{weekLabel}</h3>
             {data && (
               <p className="mt-0.5 text-xs text-purple-muted">
-                {data.week_start_formatted} – {data.week_end_formatted}
+                {data.week_start_formatted} to {data.week_end_formatted}
               </p>
             )}
           </div>
@@ -843,7 +1012,7 @@ function WeekDetailModal({ weekStart, weekLabel, onClose }) {
                   <span>Budget used</span>
                   <span className={pct > 100 ? 'text-red-400' : ''}>{pct.toFixed(0)}%</span>
                 </div>
-                <div className="h-2 overflow-hidden rounded-full bg-purple-deep">
+                <div className="glass-track h-2 overflow-hidden rounded-full">
                   <div className={`h-full rounded-full ${barColor} transition-all duration-700`} style={{ width: `${Math.min(pct, 100)}%` }} />
                 </div>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-purple-muted">
@@ -888,7 +1057,7 @@ function WeekDetailModal({ weekStart, weekLabel, onClose }) {
                               </svg>
                               {day.slice(0, 3)}
                             </span>
-                            <span className="h-2.5 flex-1 overflow-hidden rounded-full bg-purple-deep/70">
+                            <span className="glass-track h-2.5 flex-1 overflow-hidden rounded-full">
                               <span
                                 className={`block h-full rounded-full transition-all duration-700 ${total > 0 ? 'bg-purple-primary' : ''}`}
                                 style={{ width: `${(total / maxDay) * 100}%` }}
@@ -917,7 +1086,7 @@ function WeekDetailModal({ weekStart, weekLabel, onClose }) {
                                 </div>
                               ))}
                               <div className="pt-0.5 text-right text-[11px] text-purple-muted">
-                                Running total ₱{runningAtDay.toFixed(2)} · {cumPct.toFixed(0)}% of budget
+                                Running total ₱{runningAtDay.toFixed(2)}, {cumPct.toFixed(0)}% of budget
                               </div>
                             </div>
                           )}
@@ -941,12 +1110,20 @@ function MonthlyTab({ initMonth, initYear }) {
   const [year, setYear] = useState(initYear);
   const [data, setData] = useState(null);
   const [selectedWeek, setSelectedWeek] = useState(null);
+  const loadRef = useRef(null);
 
   const load = useCallback(async () => {
-    try {
-      const r = await apiFetch(`/api/monthly-summary?month=${month}&year=${year}`);
-      setData(await r.json());
-    } catch {  }
+    if (loadRef.current) return loadRef.current;
+    const request = (async () => {
+      try {
+        const r = await apiFetch(`/api/monthly-summary?month=${month}&year=${year}`);
+        setData(await r.json());
+      } catch { } finally {
+        loadRef.current = null;
+      }
+    })();
+    loadRef.current = request;
+    return request;
   }, [month, year]);
 
   useEffect(() => { load(); }, [load]);
@@ -972,21 +1149,24 @@ function MonthlyTab({ initMonth, initYear }) {
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <SectionTitle>Monthly summary</SectionTitle>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 rounded-xl border border-purple-primary/15 bg-purple-deep/40 p-1">
+          <div className="glass-inner flex items-center gap-1 rounded-xl p-1">
             <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg text-purple-soft transition hover:bg-purple-primary/15 hover:text-purple-text" onClick={prev} aria-label="Previous month">←</button>
             <span className="min-w-[120px] text-center text-sm font-medium text-purple-text">{data?.month_name || '…'}</span>
             <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg text-purple-soft transition hover:bg-purple-primary/15 hover:text-purple-text" onClick={next} aria-label="Next month">→</button>
           </div>
-          <button type="button" className={btnPrimary} onClick={() => openPdf(`/api/export-monthly-pdf?month=${month}&year=${year}`)}>
-            PDF
-          </button>
+          <IconButton label="Export monthly CSV" onClick={() => runExport(() => downloadCsv(`/api/export-csv?scope=month&month=${month}&year=${year}`))}>
+            <CsvIcon />
+          </IconButton>
+          <IconButton label="Export monthly PDF" onClick={() => runExport(() => openPdf(`/api/export-monthly-pdf?month=${month}&year=${year}`))}>
+            <ExportIcon />
+          </IconButton>
         </div>
       </div>
 
       {!data || data.num_weeks === 0 ? (
         <div className="py-12 text-center">
           <p className={`${subtext}`}>No data for this month</p>
-          <p className="mt-2 text-xs text-purple-muted">Log expenses in the Weekly tab — each week rolls up here automatically.</p>
+          <p className="mt-2 text-xs text-purple-muted">Log expenses in the Weekly tab. Each week rolls up here automatically.</p>
         </div>
       ) : (
         <>
@@ -1067,7 +1247,7 @@ function MonthlyTab({ initMonth, initYear }) {
                         </span>
                         <span className="text-xs text-purple-muted">{date}</span>
                       </div>
-                      <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-purple-deep">
+                      <div className="glass-track mb-3 h-1.5 overflow-hidden rounded-full">
                         <div className={`h-full rounded-full ${barColor} transition-all duration-700`} style={{ width: `${pct}%` }} />
                       </div>
                       <div className="grid grid-cols-3 gap-2 text-xs">
@@ -1087,134 +1267,160 @@ function MonthlyTab({ initMonth, initYear }) {
   );
 }
 
-export default function Dashboard() {
+export default function Dashboard({ monthly = false }) {
   const now = new Date();
   const navigate = useNavigate();
-  const [tab, setTab] = useState('weekly');
+  const { setHeaderActions } = useOutletContext() || {};
+  const tab = monthly ? 'monthly' : 'weekly';
   const [screen, setScreen] = useState('setup');
-  const [username, setUsername] = useState('');
-  const [darkMode, setDarkMode] = useState(localStorage.getItem('darkMode') !== 'false');
-  const [menuOpen, setMenuOpen] = useState(false);
   const [weekInfo, setWeekInfo] = useState(null);
+  const [comparison, setComparison] = useState(null);
   const [allowance, setAllowance] = useState(0);
   const [expenses, setExpenses] = useState({});
   const [totals, setTotals] = useState({ fare: 0, food: 0, other: 0, spent: 0, remaining: 0 });
+  const [categoryStatus, setCategoryStatus] = useState(null);
+  const [categoryLimits, setCategoryLimits] = useState(null);
+  const [categoryRules, setCategoryRules] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [undoItem, setUndoItem] = useState(null);
+  const dashboardLoadRef = useRef(null);
 
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
-  }, [darkMode]);
-
-  const toggleTheme = () => {
-    const next = !darkMode;
-    setDarkMode(next);
-    localStorage.setItem('darkMode', next);
-  };
-
-  const logout = async () => {
-    await apiFetch('/api/logout', { method: 'POST' });
-    navigate('/');
-  };
-
-  const refreshBudget = useCallback(async () => {
-    try {
-      const r = await apiFetch('/api/get-budget');
-      const d = await r.json();
-      if (d.allowance > 0) {
-        setAllowance(d.allowance);
-        setExpenses(d.expenses || {});
-        setTotals(d.totals);
-        setScreen('tracker');
-      }
-    } catch {  }
+  const exportWeeklyCsv = useCallback(() => {
+    runExport(() => downloadCsv('/api/export-csv?scope=week'));
   }, []);
 
   useEffect(() => {
-    apiFetch('/api/check-auth')
-      .then((r) => r.json())
-      .then((d) => {
-        if (!d.authenticated) { navigate('/'); return; }
-        setUsername(d.username);
-      })
-      .catch(() => navigate('/'));
+    if (!setHeaderActions) return undefined;
+    if (tab === 'weekly' && screen === 'tracker') {
+      setHeaderActions(
+        <IconButton label="Export weekly CSV" onClick={exportWeeklyCsv}>
+          <CsvIcon />
+          <span className="hidden sm:inline">Export CSV</span>
+        </IconButton>,
+      );
+    } else {
+      setHeaderActions(null);
+    }
+    return () => setHeaderActions(null);
+  }, [tab, screen, setHeaderActions, exportWeeklyCsv]);
+
+  const loadDashboard = useCallback(async () => {
+    if (dashboardLoadRef.current) return dashboardLoadRef.current;
+    setLoading(true);
+    const request = (async () => {
+      try {
+        const r = await apiFetch('/api/dashboard');
+        if (r.status === 401) {
+          navigate('/');
+          return;
+        }
+        if (!r.ok) return;
+        const d = await r.json();
+        applyDashboardData(d, {
+          setWeekInfo,
+          setAllowance,
+          setExpenses,
+          setTotals,
+          setComparison,
+          setScreen,
+          setCategoryStatus,
+          setCategoryLimits,
+          setCategoryRules,
+        });
+      } catch { } finally {
+        setLoading(false);
+        dashboardLoadRef.current = null;
+      }
+    })();
+    dashboardLoadRef.current = request;
+    return request;
+  }, [navigate]);
+
+  const handleBudgetPatch = useCallback((patch) => {
+    applyMutationPatch(setExpenses, setTotals, setComparison, patch, {
+      setCategoryStatus,
+      setCategoryLimits,
+      setCategoryRules,
+    });
+  }, []);
+
+  const handleAllowanceChange = useCallback(async (n) => {
+    const r = await apiFetch('/api/set-allowance', {
+      method: 'POST',
+      body: JSON.stringify({ allowance: n }),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.error || 'Failed to update allowance');
+    }
+    const d = await r.json();
+    const patch = patchAllowance(d.allowance, d.totals || totals, expenses, comparison);
+    setAllowance(patch.allowance);
+    setTotals(patch.totals);
+    setComparison(patch.comparison);
+  }, [comparison, expenses, totals]);
+
+  const handleItemDeleted = useCallback((item) => {
+    setUndoItem(item);
+  }, []);
+
+  const dismissUndo = useCallback(() => setUndoItem(null), []);
+
+  const handleUndoDelete = useCallback(async () => {
+    if (!undoItem) return;
+    const { day, name, amount, category } = undoItem;
+    setUndoItem(null);
+    try {
+      const r = await apiFetch('/api/add-expense-item', {
+        method: 'POST',
+        body: JSON.stringify({ day, name, amount, category }),
+      });
+      if (r.ok) handleBudgetPatch(await r.json());
+    } catch {
+      alert('Could not restore item');
+    }
+  }, [undoItem, handleBudgetPatch]);
+
+  useEffect(() => {
     primeCsrf();
-    apiFetch('/api/current-week-info').then((r) => r.json()).then(setWeekInfo).catch(() => {});
-    refreshBudget();
-  }, [navigate, refreshBudget]);
+    loadDashboard();
+  }, [loadDashboard]);
 
   const handleStart = (n) => {
+    const emptyTotals = { fare: 0, food: 0, other: 0, spent: 0, remaining: n };
     setAllowance(n);
+    setTotals(emptyTotals);
+    setComparison((cmp) => patchComparisonFromTotals(cmp, emptyTotals, {}));
     setScreen('tracker');
-    refreshBudget();
   };
 
-  const tabCls = (active) =>
-    `flex-1 rounded-xl px-5 py-2.5 text-center text-sm font-medium transition ${
-      active
-        ? 'bg-purple-primary text-white shadow-glow'
-        : 'text-purple-soft hover:bg-purple-primary/10 hover:text-purple-text'
-    }`;
-
   return (
-    <div className="mx-auto max-w-5xl">
-      <MobileMenu
-        open={menuOpen}
-        onClose={() => setMenuOpen(false)}
-        darkMode={darkMode}
-        onTheme={toggleTheme}
-        showExport={screen === 'tracker'}
-        onExport={() => openPdf('/api/export-pdf')}
-        onLogout={logout}
-        currentMonth={now.getMonth() + 1}
-        currentYear={now.getFullYear()}
-      />
-
-      <header className="mb-6 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-purple-primary to-purple-primary-light shadow-glow ring-1 ring-inset ring-white/15">
-            <span className="text-base font-semibold leading-none text-white">₱</span>
-          </div>
-          <div>
-            <h1 className="text-lg font-semibold leading-tight tracking-tight text-purple-text">Budget Tracker</h1>
-            <p className="text-xs text-purple-muted">Master your finances with style</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {username && <span className="mr-1 hidden text-sm text-purple-soft md:inline">Hi, {username}</span>}
-          <IconButton className="inline-flex sm:hidden" label="Menu" onClick={() => setMenuOpen(true)}>
-            <MenuIcon />
-          </IconButton>
-          <IconButton className="hidden sm:inline-flex" label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggleTheme}>
-            {darkMode ? <SunIcon /> : <MoonIcon />}
-          </IconButton>
-          {screen === 'tracker' && (
-            <IconButton className="hidden sm:inline-flex" label="Export PDF" onClick={() => openPdf('/api/export-pdf')}>
-              <ExportIcon />
-            </IconButton>
-          )}
-          <IconButton danger className="hidden sm:inline-flex" label="Logout" onClick={logout}>
-            <LogoutIcon />
-            <span className="hidden lg:inline">Logout</span>
-          </IconButton>
-        </div>
-      </header>
-
-      <nav className="mb-6 flex gap-1.5 rounded-2xl border border-purple-primary/10 bg-purple-surface/40 p-1.5 shadow-card backdrop-blur">
-        <button type="button" className={tabCls(tab === 'weekly')} onClick={() => setTab('weekly')}>Weekly Budget</button>
-        <button type="button" className={tabCls(tab === 'monthly')} onClick={() => setTab('monthly')}>Monthly Summary</button>
-      </nav>
+    <div className="w-full">
+      <UndoToast item={undoItem} onUndo={handleUndoDelete} onDismiss={dismissUndo} />
 
       {tab === 'weekly' && (
-        screen === 'setup'
-          ? <SetupScreen weekInfo={weekInfo} onStart={handleStart} />
-          : (
-            <WeeklyTracker
-              weekInfo={weekInfo}
-              allowance={allowance}
-              expenses={expenses}
-              totals={totals}
-              onRefresh={refreshBudget}
-            />
+        loading
+          ? (
+            <div className={`${card} flex min-h-[280px] items-center justify-center p-8`}>
+              <p className="text-sm text-purple-soft">Loading your budget…</p>
+            </div>
           )
+          : screen === 'setup'
+            ? <SetupScreen weekInfo={weekInfo} onStart={handleStart} />
+            : (
+              <WeeklyTracker
+                weekInfo={weekInfo}
+                allowance={allowance}
+                expenses={expenses}
+                totals={totals}
+                comparison={comparison}
+                categoryStatus={categoryStatus}
+                categoryRules={categoryRules}
+                onBudgetPatch={handleBudgetPatch}
+                onAllowanceChange={handleAllowanceChange}
+                onItemDeleted={handleItemDeleted}
+              />
+            )
       )}
       {tab === 'monthly' && (
         <MonthlyTab initMonth={now.getMonth() + 1} initYear={now.getFullYear()} />

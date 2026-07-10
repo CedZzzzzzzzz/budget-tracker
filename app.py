@@ -74,14 +74,21 @@ def create_app(config_name = "default"):
 
     return app
 
+
+def env_bool(name: str, default: bool) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "on")
+
+
 if __name__ == "__main__":
     config_name = os.getenv("FLASK_ENV", "development")
+    is_dev = config_name == "development"
     app = create_app(config_name)
     week_start, week_end = get_week_range()
 
-    if config_name == "development":
-        week_start, week_end = get_week_range()
-
+    if is_dev:
         print("\n" + "="*50)
         print("💳 BUDGET TRACKER 💳")
         print("="*50)
@@ -90,7 +97,15 @@ if __name__ == "__main__":
         print("="*50 + "\n")
 
     port = int(os.environ.get("PORT", 5000))
-    app.run(host = "0.0.0.0", port = 5000, debug = (config_name == "development"))
+    use_reload = env_bool("FLASK_RELOAD", is_dev)
+
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        debug=is_dev,
+        use_reloader=use_reload and is_dev,
+        reloader_type="stat" if os.name == "nt" else "auto",
+    )
 
 app = create_app(os.getenv("FLASK_ENV", "production"))
 

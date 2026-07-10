@@ -10,9 +10,9 @@ from email.utils import parseaddr
 
 logger = logging.getLogger(__name__)
 
-_BREVO_SMTP_KEY_PREFIX = "xsmtpsib-"
-_BREVO_API_KEY_PREFIX = "xkeysib-"
-_BREVO_SHORT_SMTP_KEY_LEN = 15
+BREVO_SMTP_KEY_PREFIX = "xsmtpsib-"
+BREVO_API_KEY_PREFIX = "xkeysib-"
+BREVO_SHORT_SMTP_KEY_LEN = 15
 
 BREVO_SMTP_HOST = "smtp-relay.brevo.com"
 BREVO_SMTP_PORT = 587
@@ -35,9 +35,9 @@ def smtp_host():
 
 
 def looks_like_brevo_smtp_key(password):
-    if password.startswith(_BREVO_SMTP_KEY_PREFIX):
+    if password.startswith(BREVO_SMTP_KEY_PREFIX):
         return True
-    if len(password) == _BREVO_SHORT_SMTP_KEY_LEN and password.isalnum():
+    if len(password) == BREVO_SHORT_SMTP_KEY_LEN and password.isalnum():
         return True
     return False
 
@@ -48,11 +48,11 @@ def validate_smtp_key_format(password):
     host = smtp_host() or ""
     if "brevo" not in host:
         return
-    if password.startswith(_BREVO_API_KEY_PREFIX):
+    if password.startswith(BREVO_API_KEY_PREFIX):
         logger.warning(
             "BREVO_SMTP_KEY looks like a Brevo API key (%s). Use an SMTP key from "
             "Brevo → SMTP & API → SMTP tab instead.",
-            _BREVO_API_KEY_PREFIX,
+            BREVO_API_KEY_PREFIX,
         )
         return
     if not looks_like_brevo_smtp_key(password):
@@ -62,10 +62,25 @@ def validate_smtp_key_format(password):
         )
 
 
+def preferred_email_transport():
+    transport = os.environ.get("EMAIL_TRANSPORT", "").strip().lower()
+    if transport == "smtp":
+        return "smtp"
+    if transport == "api":
+        return "api"
+    if os.environ.get("FLASK_ENV", "development") == "development" and smtp_password():
+        return "smtp"
+    if brevo_api_key():
+        return "api"
+    if smtp_password():
+        return "smtp"
+    return None
+
+
 def mail_configured():
     if not os.environ.get("SMTP_FROM"):
         return False
-    if brevo_api_key():
+    if preferred_email_transport() == "api" and brevo_api_key():
         return True
     password = smtp_password()
     if password:
@@ -191,10 +206,12 @@ def send_password_reset_email(to_email, reset_url):
         )
         return True
 
-    transport = os.environ.get("EMAIL_TRANSPORT", "").lower()
-    if brevo_api_key() and transport != "smtp":
+    transport = preferred_email_transport()
+    if transport == "api" and brevo_api_key():
         return send_via_brevo_api(to_email, subject, text_body, html_body)
-    return send_via_smtp(to_email, subject, text_body, html_body)
+    if transport == "smtp":
+        return send_via_smtp(to_email, subject, text_body, html_body)
+    return False
 
 
 def send_password_reset_email_background(to_email, reset_url):

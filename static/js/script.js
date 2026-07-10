@@ -78,9 +78,6 @@ const attachListener = (id, event, fn) => {
 attachListener('logoutBtn', 'click', handleLogout);
 attachListener('themeToggle', 'click', toggleTheme);
 
-attachListener('exportBtn', 'click', () => {
-    window.location.href = '/api/export-pdf';
-});
 attachListener('exportMonthlyBtn', 'click', () => {
     window.location.href = `/api/export-monthly-pdf?month=${currentMonth}&year=${currentYear}`;
 });
@@ -125,7 +122,6 @@ function toggleTheme() {
     applyTheme(darkMode);
 }
 
-function exportWeeklyPDF() { window.location.href = '/api/export-pdf'; }
 function exportMonthlyPDF() { window.location.href = `/api/export-monthly-pdf?month=${currentMonth}&year=${currentYear}`; }
 
 async function loadWeekInfo() {
@@ -157,7 +153,7 @@ async function startTracking() {
             allowanceDisplay.textContent = `₱${allowance.toFixed(2)}`;
             setupScreen.classList.remove('active');
             trackerScreen.classList.add('active');
-            exportBtn.classList.remove('hidden');
+            exportBtn?.classList.remove('hidden');
             updateDisplay();
         }
     } catch (e) { alert('Server error'); }
@@ -173,28 +169,7 @@ function selectDay(day) {
 }
 
 async function addExpense() {
-    if (!selectedDay) return;
-    const fare = parseFloat(fareInput.value) || 0;
-    const food = parseFloat(foodInput.value) || 0;
-    const other = parseFloat(otherInput.value) || 0;
-    if (fare === 0 && food === 0 && other === 0) return alert('Enter at least one expense');
-
-    try {
-        const res = await fetch('/api/add-expense', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ day: selectedDay, fare, food, other })
-        });
-        if (res.ok) {
-            const data = await res.json();
-            expenses[data.day] = data.expense;
-            updateDayButtons();
-            dayButtons.forEach(btn => btn.classList.remove('selected'));
-            selectedDay = '';
-            expenseInputs.classList.add('hidden');
-            await fetchBudgetData();
-        }
-    } catch (e) { alert('Server error'); }
+    alert('This view is deprecated. Use the React dashboard to add expense items.');
 }
 
 async function deleteExpense(day) {
@@ -357,7 +332,6 @@ function renderWeeklyBreakdown(weeks) {
 
 window.deleteExpense = deleteExpense;
 window.toggleTheme = toggleTheme;
-window.exportWeeklyPDF = exportWeeklyPDF;
 window.exportMonthlyPDF = exportMonthlyPDF;
 
 window.addEventListener('DOMContentLoaded', async () => {
@@ -394,7 +368,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                 allowanceDisplay.textContent = `₱${allowance.toFixed(2)}`;
                 setupScreen.classList.remove('active');
                 trackerScreen.classList.add('active');
-                exportBtn.classList.remove('hidden');
+                exportBtn?.classList.remove('hidden');
 
                 updateDisplay(data.totals);
                 renderExpenseList();
@@ -403,19 +377,19 @@ window.addEventListener('DOMContentLoaded', async () => {
                 console.log('❌ SHOWING SETUP SCREEN - No allowance');
                 setupScreen.classList.add('active');
                 trackerScreen.classList.remove('active');
-                exportBtn.classList.add('hidden');
+                exportBtn?.classList.add('hidden');
             }
         } else {
             console.log('❌ SHOWING SETUP SCREEN - Response not OK');
             setupScreen.classList.add('active');
             trackerScreen.classList.remove('active');
-            exportBtn.classList.add('hidden');
+            exportBtn?.classList.add('hidden');
         }
     } catch (e) {
         console.log('❌ SHOWING SETUP SCREEN - Error caught:', e);
         setupScreen.classList.add('active');
         trackerScreen.classList.remove('active');
-        exportBtn.classList.add('hidden');
+        exportBtn?.classList.add('hidden');
     }
 
     console.log('=== PAGE LOAD END ===');
