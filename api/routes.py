@@ -16,7 +16,7 @@ from api.email_service import (
     send_password_reset_email_background,
 )
 from api.errors import GEMINI_ERRORS, handle_api_errors, internal_error
-from api.pdf_report import build_monthly_pdf, pdf_response
+from api.pdf_report import build_monthly_pdf, build_yearly_pdf, build_range_pdf, pdf_response
 from extensions import limiter
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,20 @@ def enforce_api_security():
 MAX_USERNAME_LEN = db.MAX_USERNAME_LEN
 MAX_EMAIL_LEN = db.MAX_EMAIL_LEN
 MAX_ITEM_NAME_LEN = db.MAX_ITEM_NAME_LEN
+MAX_ITEM_NOTES_LEN = db.MAX_ITEM_NOTES_LEN
+MAX_TAG_LEN = db.MAX_TAG_LEN
+MAX_TAGS_PER_ITEM = db.MAX_TAGS_PER_ITEM
 MAX_PASSWORD_LEN = 128
+
+
+def parse_item_notes_tags(data):
+    try:
+        notes = db.normalize_item_notes(data.get("notes", ""))
+        tags = db.normalize_item_tags(data.get("tags"))
+    except ValueError as exc:
+        return None, None, str(exc)
+    return notes, tags, None
+
 
 prompt = (
     "You are a financial assistant that provides insights and recommendations based on the user's budget weekly data.\n"
@@ -158,6 +171,8 @@ def serialize_expenses(expenses):
                 "name": item["name"],
                 "amount": db.as_float(item["amount"]),
                 "category": item["category"],
+                "notes": item.get("notes") or "",
+                "tags": list(item.get("tags") or []),
             } for item in exp.get("items", [])],
         }
     return result
@@ -564,6 +579,9 @@ def add_expense_item_route():
     name = (data.get("name") or "").strip()
     amount = float(data.get("amount", 0))
     category = (data.get("category") or "").strip().lower()
+    notes, tags, meta_error = parse_item_notes_tags(data or {})
+    if meta_error:
+        return jsonify({"error": meta_error}), 400
 
     if not day:
         return jsonify({"error": "Day is required"}), 400
@@ -584,17 +602,12 @@ def add_expense_item_route():
         return jsonify({"error": "Please set allowance first."}), 404
 
     item, day, day_expense, budget_totals = db.add_expense_item(
-        budget["id"], day, expense_date, name, amount, category,
+        budget["id"], day, expense_date, name, amount, category, notes=notes, tags=tags,
     )
     db.learn_category_correction(user_id, name, category)
     return jsonify({
         **mutation_payload(day, day_expense, budget_totals, user_id),
-        "item": {
-            "id": item["id"],
-            "name": item["name"],
-            "amount": db.as_float(item["amount"]),
-            "category": item["category"],
-        },
+        "item": db.expense_item_dict(item),
     })
 
 
@@ -607,6 +620,9 @@ def edit_expense_item_route(item_id):
     name = (data.get("name") or "").strip()
     amount = float(data.get("amount", 0))
     category = (data.get("category") or "").strip().lower()
+    notes, tags, meta_error = parse_item_notes_tags(data or {})
+    if meta_error:
+        return jsonify({"error": meta_error}), 400
 
     if not name:
         return jsonify({"error": "Item name is required"}), 400
@@ -618,7 +634,9 @@ def edit_expense_item_route(item_id):
         user_rules = db.get_user_category_rules(user_id)
         category = categorize_item(name, user_rules)
 
-    item, day, day_expense, budget_totals = db.update_expense_item(item_id, user_id, name, amount, category)
+    item, day, day_expense, budget_totals = db.update_expense_item(
+        item_id, user_id, name, amount, category, notes=notes, tags=tags,
+    )
     if not item:
         return jsonify({"error": "Item not found"}), 404
 
@@ -627,12 +645,7 @@ def edit_expense_item_route(item_id):
     week_start, week_end = get_week_range()
     return jsonify({
         **mutation_payload(day, day_expense, budget_totals, user_id),
-        "item": {
-            "id": item["id"],
-            "name": item["name"],
-            "amount": db.as_float(item["amount"]),
-            "category": item["category"],
-        },
+        "item": db.expense_item_dict(item),
     })
 
 
@@ -849,6 +862,198 @@ def delete_recurring_expense_route(recurring_id):
     })
 
 
+def period_date_range(period, month=None, year=None):
+    now = datetime.now()
+    year = year or now.year
+    month = month or now.month
+
+    if period == "week":
+        week_start, week_end = get_week_range()
+        label = f"{week_start.strftime('%b %d')} – {week_end.strftime('%b %d, %Y')}"
+        return week_start, week_end + timedelta(days=1), label
+
+    if period == "month":
+        start = datetime(year, month, 1).date()
+        end = (
+            datetime(year + 1, 1, 1).date() if month == 12
+            else datetime(year, month + 1, 1).date()
+        )
+        label = datetime(year, month, 1).strftime("%B %Y")
+        return start, end, label
+
+    if period == "year":
+        start = datetime(year, 1, 1).date()
+        end = datetime(year + 1, 1, 1).date()
+        label = str(year)
+        return start, end, label
+
+    if period == "all":
+        return datetime(2000, 1, 1).date(), datetime(2100, 1, 1).date(), "All time"
+
+    return None, None, None
+
+
+@api.route("/savings-snapshot", methods=["GET"])
+@login_required
+@handle_api_errors
+def savings_snapshot():
+    user_id = get_user_id()
+    period = (request.args.get("period") or "year").lower()
+    if period not in ("week", "month", "year", "all"):
+        return jsonify({"error": "period must be week, month, year, or all"}), 400
+
+    month = request.args.get("month", type=int)
+    year = request.args.get("year", type=int)
+    if month is not None and (month < 1 or month > 12):
+        return jsonify({"error": "month must be between 1 and 12"}), 400
+    if year is not None and (year < 2000 or year > 2100):
+        return jsonify({"error": "year is out of range"}), 400
+
+    start_date, end_date, label = period_date_range(period, month=month, year=year)
+    ledger, _weeks = db.get_savings_ledger(user_id, start_date, end_date)
+    return jsonify({
+        "period": period,
+        "label": label,
+        "start_date": str(start_date),
+        "end_date": str(end_date - timedelta(days=1)),
+        **ledger,
+    })
+
+
+def _parse_goal_deadline(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        try:
+            return datetime.strptime(value[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return False
+    return value
+
+
+@api.route("/savings-goals", methods=["GET"])
+@login_required
+@handle_api_errors
+def list_savings_goals():
+    include_archived = request.args.get("include_archived", "false").lower() == "true"
+    return jsonify({
+        "goals": db.get_savings_goals(get_user_id(), include_archived=include_archived),
+    })
+
+
+@api.route("/savings-goals", methods=["POST"])
+@login_required
+@handle_api_errors
+def create_savings_goal_route():
+    data = request.get_json() or {}
+    user_id = get_user_id()
+    name = (data.get("name") or "").strip()
+    try:
+        target = float(data.get("target_amount", 0))
+        current = float(data.get("current_amount", 0) or 0)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Amounts must be valid numbers."}), 400
+
+    if not name:
+        return jsonify({"error": "Name is required."}), 400
+    if len(name) > MAX_ITEM_NAME_LEN:
+        return jsonify({"error": f"Name must be at most {MAX_ITEM_NAME_LEN} characters."}), 400
+    if target <= 0:
+        return jsonify({"error": "Target amount must be greater than 0."}), 400
+    if current < 0:
+        return jsonify({"error": "Current amount cannot be negative."}), 400
+
+    deadline = _parse_goal_deadline(data.get("deadline"))
+    if deadline is False:
+        return jsonify({"error": "Deadline must be YYYY-MM-DD."}), 400
+
+    goal_id = db.create_savings_goal(user_id, name, target, current, deadline)
+    return jsonify({
+        "success": True,
+        "id": goal_id,
+        "goals": db.get_savings_goals(user_id),
+    }), 201
+
+
+@api.route("/savings-goals/<int:goal_id>", methods=["PUT"])
+@login_required
+@handle_api_errors
+def update_savings_goal_route(goal_id):
+    data = request.get_json() or {}
+    user_id = get_user_id()
+    if not db.get_savings_goal(goal_id, user_id):
+        return jsonify({"error": "Savings goal not found."}), 404
+
+    fields = {}
+    if "name" in data:
+        name = (data.get("name") or "").strip()
+        if not name:
+            return jsonify({"error": "Name is required."}), 400
+        if len(name) > MAX_ITEM_NAME_LEN:
+            return jsonify({"error": f"Name must be at most {MAX_ITEM_NAME_LEN} characters."}), 400
+        fields["name"] = name
+    if "target_amount" in data:
+        try:
+            target = float(data.get("target_amount", 0))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Target amount must be a valid number."}), 400
+        if target <= 0:
+            return jsonify({"error": "Target amount must be greater than 0."}), 400
+        fields["target_amount"] = target
+    if "current_amount" in data:
+        try:
+            current = float(data.get("current_amount", 0))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Current amount must be a valid number."}), 400
+        if current < 0:
+            return jsonify({"error": "Current amount cannot be negative."}), 400
+        fields["current_amount"] = current
+    if "deadline" in data:
+        deadline = _parse_goal_deadline(data.get("deadline"))
+        if deadline is False:
+            return jsonify({"error": "Deadline must be YYYY-MM-DD."}), 400
+        fields["deadline"] = deadline
+    if "status" in data:
+        status = (data.get("status") or "").strip().lower()
+        if status not in ("active", "completed", "archived"):
+            return jsonify({"error": "Status must be active, completed, or archived."}), 400
+        fields["status"] = status
+
+    goal = db.update_savings_goal(goal_id, user_id, **fields)
+    if not goal:
+        return jsonify({"error": "Savings goal not found."}), 404
+    return jsonify({"success": True, "goal": goal, "goals": db.get_savings_goals(user_id)})
+
+
+@api.route("/savings-goals/<int:goal_id>/contribute", methods=["POST"])
+@login_required
+@handle_api_errors
+def contribute_savings_goal_route(goal_id):
+    data = request.get_json() or {}
+    user_id = get_user_id()
+    try:
+        amount = float(data.get("amount", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Amount must be a valid number."}), 400
+    if amount <= 0:
+        return jsonify({"error": "Contribution must be greater than 0."}), 400
+
+    goal = db.contribute_to_savings_goal(goal_id, user_id, amount)
+    if not goal:
+        return jsonify({"error": "Savings goal not found."}), 404
+    return jsonify({"success": True, "goal": goal, "goals": db.get_savings_goals(user_id)})
+
+
+@api.route("/savings-goals/<int:goal_id>", methods=["DELETE"])
+@login_required
+@handle_api_errors
+def delete_savings_goal_route(goal_id):
+    user_id = get_user_id()
+    if not db.delete_savings_goal(goal_id, user_id):
+        return jsonify({"error": "Savings goal not found."}), 404
+    return jsonify({"success": True, "goals": db.get_savings_goals(user_id)})
+
+
 @api.route("/monthly-summary", methods=["GET"])
 @login_required
 @handle_api_errors
@@ -862,9 +1067,8 @@ def monthly_summary():
                   else datetime(year, month + 1, 1).date())
 
     weeks, breakdown = db.get_monthly_summary(user_id, start_date, end_date)
+    snapshot = db.build_savings_snapshot(weeks, finalized_only=False)
 
-    total_allowance = sum(db.as_float(w["allowance"]) for w in weeks)
-    total_spent = sum(db.as_float(w["total_spent"]) for w in weeks)
     weekly_data = [
         {
             "week_start": str(w["week_start_date"]),
@@ -877,9 +1081,11 @@ def monthly_summary():
     return jsonify({
         "month": month, "year": year,
         "month_name": datetime(year, month, 1).strftime("%B %Y"),
-        "total_allowance": total_allowance,
-        "total_spent": total_spent,
-        "total_saved": total_allowance - total_spent,
+        "total_allowance": snapshot["total_allowance"],
+        "total_spent": snapshot["total_spent"],
+        "total_saved": snapshot["total_allowance"] - snapshot["total_spent"],
+        "total_undersaved": snapshot["total_saved"],
+        "total_overspent": snapshot["total_overspent"],
         "breakdown": {c: breakdown.get(c, 0) for c in CATEGORIES},
         "weeks": weekly_data,
         "num_weeks": len(weekly_data),
@@ -901,6 +1107,25 @@ def export_csv():
             else datetime(year, month + 1, 1).date()
         )
         filename = f"budget-{year}-{month:02d}.csv"
+    elif scope == "year":
+        year = request.args.get("year", datetime.now().year, type=int)
+        if year < 2000 or year > 2100:
+            return jsonify({"error": "year is out of range"}), 400
+        start_date = datetime(year, 1, 1).date()
+        end_date = datetime(year + 1, 1, 1).date()
+        filename = f"budget-{year}.csv"
+    elif scope == "range":
+        start_raw = (request.args.get("start") or "").strip()
+        end_raw = (request.args.get("end") or "").strip()
+        try:
+            start_date = datetime.strptime(start_raw[:10], "%Y-%m-%d").date()
+            end_inclusive = datetime.strptime(end_raw[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "start and end must be YYYY-MM-DD"}), 400
+        if end_inclusive < start_date:
+            return jsonify({"error": "end must be on or after start"}), 400
+        end_date = end_inclusive + timedelta(days=1)
+        filename = f"budget-{start_date}_to_{end_inclusive}.csv"
     else:
         week_start, week_end = get_week_range()
         start_date = week_start
@@ -910,7 +1135,7 @@ def export_csv():
     rows = db.fetch_export_rows(user_id, start_date, end_date)
     output = StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Date", "Day", "Item", "Category", "Amount"])
+    writer.writerow(["Date", "Day", "Item", "Category", "Amount", "Notes", "Tags"])
     for row in rows:
         writer.writerow([
             row["expense_date"],
@@ -918,6 +1143,8 @@ def export_csv():
             row["name"],
             CATEGORY_LABELS.get(row["category"], row["category"]),
             f'{row["amount"]:.2f}',
+            row.get("notes") or "",
+            ", ".join(row.get("tags") or []),
         ])
 
     return Response(
@@ -990,5 +1217,100 @@ def export_monthly_pdf():
     )
     buffer = build_monthly_pdf(year, month, weeks, cat_totals, insights)
     return pdf_response(buffer, f"{year}_{month}.pdf")
+
+
+@api.route("/report-summary", methods=["GET"])
+@login_required
+@handle_api_errors
+def report_summary():
+    user_id = get_user_id()
+    start_raw = (request.args.get("start") or "").strip()
+    end_raw = (request.args.get("end") or "").strip()
+    try:
+        start_date = datetime.strptime(start_raw[:10], "%Y-%m-%d").date()
+        end_inclusive = datetime.strptime(end_raw[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"error": "start and end must be YYYY-MM-DD"}), 400
+    if end_inclusive < start_date:
+        return jsonify({"error": "end must be on or after start"}), 400
+    if (end_inclusive - start_date).days > 366:
+        return jsonify({"error": "Range cannot exceed 366 days"}), 400
+
+    end_date = end_inclusive + timedelta(days=1)
+    label = f"{start_date.strftime('%b %d, %Y')} to {end_inclusive.strftime('%b %d, %Y')}"
+    report = db.build_period_report(user_id, start_date, end_date, label=label)
+    report.pop("raw_weeks", None)
+    return jsonify(report)
+
+
+@api.route("/yearly-summary", methods=["GET"])
+@login_required
+@handle_api_errors
+def yearly_summary():
+    user_id = get_user_id()
+    year = request.args.get("year", datetime.now().year, type=int)
+    if year < 2000 or year > 2100:
+        return jsonify({"error": "year is out of range"}), 400
+    summary = db.get_yearly_summary(user_id, year)
+    summary.pop("raw_weeks", None)
+    summary.pop("month_rows", None)
+    return jsonify(summary)
+
+
+@api.route("/export-yearly-pdf", methods=["GET"])
+@login_required
+@handle_api_errors
+def export_yearly_pdf():
+    user_id = get_user_id()
+    year = request.args.get("year", datetime.now().year, type=int)
+    if year < 2000 or year > 2100:
+        return jsonify({"error": "year is out of range"}), 400
+
+    summary = db.get_yearly_summary(user_id, year)
+    cat_totals = summary["breakdown"]
+    insights = generate_budget_insights(
+        summary["total_allowance"],
+        {
+            **cat_totals,
+            "spent": summary["total_spent"],
+            "remaining": summary["total_saved"],
+        },
+        period="year",
+    )
+    buffer = build_yearly_pdf(year, summary["month_rows"], cat_totals, insights)
+    return pdf_response(buffer, f"budget-{year}.pdf")
+
+
+@api.route("/export-range-pdf", methods=["GET"])
+@login_required
+@handle_api_errors
+def export_range_pdf():
+    user_id = get_user_id()
+    start_raw = (request.args.get("start") or "").strip()
+    end_raw = (request.args.get("end") or "").strip()
+    try:
+        start_date = datetime.strptime(start_raw[:10], "%Y-%m-%d").date()
+        end_inclusive = datetime.strptime(end_raw[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"error": "start and end must be YYYY-MM-DD"}), 400
+    if end_inclusive < start_date:
+        return jsonify({"error": "end must be on or after start"}), 400
+    if (end_inclusive - start_date).days > 366:
+        return jsonify({"error": "Range cannot exceed 366 days"}), 400
+
+    end_date = end_inclusive + timedelta(days=1)
+    label = f"{start_date.strftime('%b %d, %Y')} to {end_inclusive.strftime('%b %d, %Y')}"
+    report = db.build_period_report(user_id, start_date, end_date, label=label)
+    insights = generate_budget_insights(
+        report["total_allowance"],
+        {
+            **report["breakdown"],
+            "spent": report["total_spent"],
+            "remaining": report["total_saved"],
+        },
+        period="range",
+    )
+    buffer = build_range_pdf(label, report["raw_weeks"], report["breakdown"], insights)
+    return pdf_response(buffer, f"budget-{start_date}_to_{end_inclusive}.pdf")
 
 

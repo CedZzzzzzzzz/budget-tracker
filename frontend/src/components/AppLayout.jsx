@@ -30,8 +30,25 @@ const ChartIcon = () => (
 );
 const BudgetIcon = () => (
   <svg {...svgProps}>
-    <path d="M12 2v20" />
-    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7H14a3.5 3.5 0 0 1 0 7H6" />
+    <rect x="2" y="7" width="20" height="12" rx="2" />
+    <circle cx="12" cy="13" r="2.25" />
+    <path d="M6 10.5v5M18 10.5v5" />
+  </svg>
+);
+const SavingsIcon = () => (
+  <svg {...svgProps}>
+    <path d="M19 11a6.5 6.5 0 0 0-6.5-6.5h-3A5.5 5.5 0 0 0 4 10c0 2.4 1.4 4.5 3.4 5.5V19h3.2v-2h2.8v2H16v-3.1c1.2-.7 2.1-1.7 2.5-3" />
+    <path d="M16.5 11H20a1.5 1.5 0 0 1 0 3h-3.2" />
+    <circle cx="9" cy="10.5" r="0.9" fill="currentColor" stroke="none" />
+    <path d="M7.2 19v1.5M13.8 19v1.5" />
+  </svg>
+);
+const ReportsIcon = () => (
+  <svg {...svgProps}>
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <path d="M14 2v6h6" />
+    <path d="M8 13h8" />
+    <path d="M8 17h6" />
   </svg>
 );
 const SettingsIcon = () => (
@@ -67,6 +84,8 @@ const MenuIcon = () => (
 const NAV_ICONS = {
   weekly: HomeIcon,
   monthly: ChartIcon,
+  reports: ReportsIcon,
+  savings: SavingsIcon,
   budget: BudgetIcon,
   settings: SettingsIcon,
 };
@@ -86,7 +105,7 @@ function SidebarNav({ onNavigate }) {
   return (
     <nav className="flex flex-1 flex-col gap-1 px-2">
       {NAV_ITEMS.map((item) => {
-        const Icon = NAV_ICONS[item.id];
+        const Icon = NAV_ICONS[item.id] || HomeIcon;
         return (
           <NavLink
             key={item.id}

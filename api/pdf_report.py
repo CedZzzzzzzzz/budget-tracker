@@ -252,8 +252,83 @@ def stat_cards_row(*cards):
 
 
 def build_monthly_pdf(year, month, weeks, cat_totals, insights):
-    total_allowance = sum(float(week["allowance"]) for week in weeks)
-    total_spent = sum(float(week["total_spent"]) for week in weeks)
+    badge = f"[ {datetime(year, month, 1).strftime('%B %Y').upper()} ]"
+    return build_period_pdf(
+        "MONTHLY FINANCIAL TRACKER",
+        badge,
+        weeks,
+        cat_totals,
+        insights,
+        income_source="Allowance",
+        income_desc_fn=lambda index, _row: f"Week {index + 1} budget",
+        unit_label="Weeks Tracked",
+        unit_value=f"{len(weeks)} wk(s)",
+        balance_note="Total saved this month",
+    )
+
+
+def build_yearly_pdf(year, month_rows, cat_totals, insights):
+    rows = [
+        {
+            "week_start_date": row["week_start_date"],
+            "allowance": row["allowance"],
+            "total_spent": row["total_spent"],
+            "_label": row["month_name"],
+        }
+        for row in month_rows
+    ]
+    return build_period_pdf(
+        "YEARLY FINANCIAL TRACKER",
+        f"[ {year} ]",
+        rows,
+        cat_totals,
+        insights,
+        income_source="Allowance",
+        income_desc_fn=lambda _i, row: row.get("_label", "Month"),
+        expense_desc_fn=lambda label: f"Yearly {label.lower()} total",
+        unit_label="Months Tracked",
+        unit_value=f"{len(month_rows)} mo(s)",
+        balance_note="Total saved this year",
+    )
+
+
+def build_range_pdf(label, weeks, cat_totals, insights):
+    return build_period_pdf(
+        "CUSTOM RANGE REPORT",
+        f"[ {label.upper()} ]",
+        weeks,
+        cat_totals,
+        insights,
+        income_source="Allowance",
+        income_desc_fn=lambda index, _row: f"Week {index + 1} budget",
+        expense_desc_fn=lambda cat_label: f"Range {cat_label.lower()} total",
+        unit_label="Weeks Tracked",
+        unit_value=f"{len(weeks)} wk(s)",
+        balance_note="Net for selected range",
+    )
+
+
+def build_period_pdf(
+    title,
+    badge,
+    rows,
+    cat_totals,
+    insights,
+    *,
+    income_source="Allowance",
+    income_desc_fn=None,
+    expense_desc_fn=None,
+    unit_label="Periods",
+    unit_value="0",
+    balance_note="Balance",
+):
+    if income_desc_fn is None:
+        income_desc_fn = lambda index, _row: f"Period {index + 1}"
+    if expense_desc_fn is None:
+        expense_desc_fn = lambda label: f"{label} total"
+
+    total_allowance = sum(float(row["allowance"]) for row in rows)
+    total_spent = sum(float(row.get("total_spent", row.get("spent", 0))) for row in rows)
     total_saved = total_allowance - total_spent
 
     usable = PAGE_W - 2 * MARGIN
@@ -266,12 +341,17 @@ def build_monthly_pdf(year, month, weeks, cat_totals, insights):
     expense_col_widths = [right_width * 0.17, right_width * 0.23, right_width * 0.38, right_width * 0.22]
 
     income_rows = [
-        [str(week["week_start_date"]), "Allowance", f"Week {index + 1} budget", f"{float(week['allowance']):,.2f}"]
-        for index, week in enumerate(weeks)
+        [
+            str(row["week_start_date"]),
+            income_source,
+            income_desc_fn(index, row),
+            f"{float(row['allowance']):,.2f}",
+        ]
+        for index, row in enumerate(rows)
     ] or [["—", "—", "No data", "0.00"]]
 
     expense_rows = [
-        ["—", CATEGORY_LABELS[category], f"Monthly {CATEGORY_LABELS[category].lower()} total", f"{cat_totals[category]:,.2f}"]
+        ["—", CATEGORY_LABELS[category], expense_desc_fn(CATEGORY_LABELS[category]), f"{cat_totals[category]:,.2f}"]
         for category in CATEGORIES
         if cat_totals[category] > 0
     ] or [["—", "—", "No expenses", "0.00"]]
@@ -285,7 +365,7 @@ def build_monthly_pdf(year, month, weeks, cat_totals, insights):
         pdf_data_table(
             ["Method", "Amount Saved", "Notes"],
             [
-                ["Monthly balance", f"{total_saved:,.2f}", "Total saved this month"],
+                ["Period balance", f"{total_saved:,.2f}", balance_note],
                 ["Total spent", f"{total_spent:,.2f}", "All expenses combined"],
             ],
             savings_col_widths,
@@ -300,13 +380,13 @@ def build_monthly_pdf(year, month, weeks, cat_totals, insights):
     ]
 
     elements = [
-        page_header("MONTHLY FINANCIAL TRACKER", f"[ {datetime(year, month, 1).strftime('%B %Y').upper()} ]"),
+        page_header(title, badge),
         Spacer(1, 10),
         stat_cards_row(
             stat_card("Total Allowance", f"{total_allowance:,.2f}", PURPLE_MAIN),
             stat_card("Total Spent", f"{total_spent:,.2f}", PINK),
             stat_card("Total Saved", f"{total_saved:,.2f}", GREEN),
-            stat_card("Weeks Tracked", f"{len(weeks)} wk(s)", GOLD),
+            stat_card(unit_label, unit_value, GOLD),
         ),
         Spacer(1, 10),
         two_col_body(left, right)[0],
@@ -324,8 +404,11 @@ def build_monthly_pdf(year, month, weeks, cat_totals, insights):
     )
 
     note_width = right_width * 0.30
+    note_items = (insights or [])[:3]
+    while len(note_items) < 3:
+        note_items.append("No additional notes for this period.")
     note_row = Table(
-        [[note_box(insights[0], width=note_width), note_box(insights[1], width=note_width), note_box(insights[2], width=note_width)]],
+        [[note_box(note_items[0], width=note_width), note_box(note_items[1], width=note_width), note_box(note_items[2], width=note_width)]],
         colWidths=[right_width * 0.32] * 3,
     )
     note_row.setStyle(TableStyle([

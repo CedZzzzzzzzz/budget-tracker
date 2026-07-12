@@ -21,6 +21,9 @@ MONEY_TYPE = "NUMERIC(12,2)"
 MAX_USERNAME_LEN = 50
 MAX_EMAIL_LEN = 255
 MAX_ITEM_NAME_LEN = 200
+MAX_ITEM_NOTES_LEN = 500
+MAX_TAG_LEN = 30
+MAX_TAGS_PER_ITEM = 8
 
 GMAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
 db_pool = None
@@ -45,6 +48,56 @@ def as_float(value):
     if isinstance(value, Decimal):
         return float(value)
     return float(value)
+
+
+def normalize_item_notes(notes):
+    text = (notes or "").strip()
+    if len(text) > MAX_ITEM_NOTES_LEN:
+        raise ValueError(f"Notes must be at most {MAX_ITEM_NOTES_LEN} characters.")
+    return text
+
+
+def normalize_item_tags(tags):
+    if tags is None:
+        raw = []
+    elif isinstance(tags, str):
+        raw = tags.replace(";", ",").split(",")
+    elif isinstance(tags, (list, tuple)):
+        raw = tags
+    else:
+        raise ValueError("Tags must be a list or comma-separated string.")
+
+    cleaned = []
+    seen = set()
+    for tag in raw:
+        value = str(tag or "").strip().lower()
+        if not value:
+            continue
+        if len(value) > MAX_TAG_LEN:
+            raise ValueError(f"Each tag must be at most {MAX_TAG_LEN} characters.")
+        if value in seen:
+            continue
+        seen.add(value)
+        cleaned.append(value)
+        if len(cleaned) > MAX_TAGS_PER_ITEM:
+            raise ValueError(f"At most {MAX_TAGS_PER_ITEM} tags allowed.")
+    return cleaned
+
+
+def expense_item_dict(item):
+    tags = item.get("tags")
+    if tags is None:
+        tags = []
+    elif not isinstance(tags, (list, tuple)):
+        tags = list(tags) if tags else []
+    return {
+        "id": item["id"],
+        "name": item["name"],
+        "amount": as_float(item["amount"]),
+        "category": item["category"],
+        "notes": item.get("notes") or "",
+        "tags": list(tags),
+    }
 
 
 def ensure_pooler_host(url):
@@ -456,7 +509,7 @@ def get_expense_by_day(budget_id, day):
 def get_items_by_expense(expense_id):
     with db_cursor(dict_cursor=True) as cursor:
         cursor.execute(
-            'SELECT id, expense_id, name, amount, category, created_at '
+            'SELECT id, expense_id, name, amount, category, notes, tags, created_at '
             'FROM expense_items WHERE expense_id = %s ORDER BY created_at',
             (expense_id,),
         )
@@ -466,7 +519,7 @@ def get_items_by_expense(expense_id):
 def get_items_by_budget(budget_id):
     with db_cursor(dict_cursor=True) as cursor:
         cursor.execute('''
-            SELECT ei.id, ei.expense_id, ei.name, ei.amount, ei.category, e.day
+            SELECT ei.id, ei.expense_id, ei.name, ei.amount, ei.category, ei.notes, ei.tags, e.day
             FROM expense_items ei
             JOIN expenses e ON ei.expense_id = e.id
             WHERE e.budget_id = %s
@@ -479,12 +532,8 @@ def get_items_grouped_by_expense_id(budget_id):
     grouped = {}
     for item in get_items_by_budget(budget_id):
         expense_id = item['expense_id']
-        grouped.setdefault(expense_id, []).append({
-            'id': item['id'],
-            'name': item['name'],
-            'amount': as_float(item['amount']),
-            'category': item['category'],
-        })
+        public = expense_item_dict(item)
+        grouped.setdefault(expense_id, []).append(public)
     return grouped
 
 
@@ -644,6 +693,244 @@ def get_monthly_summary(user_id, start_date, end_date):
     return weeks, breakdown
 
 
+def build_period_report(user_id, start_date, end_date, label=None):
+    from api.categorize import CATEGORIES
+
+    weeks, breakdown = get_monthly_summary(user_id, start_date, end_date)
+    snapshot = build_savings_snapshot(weeks, finalized_only=False)
+    cat_totals = {c: as_float(breakdown.get(c, 0)) for c in CATEGORIES}
+    weekly_data = [
+        {
+            "week_start": str(w["week_start_date"]),
+            "week_end": str(w["week_end_date"]),
+            "allowance": as_float(w["allowance"]),
+            "spent": as_float(w["total_spent"]),
+            "saved": as_float(w["allowance"]) - as_float(w["total_spent"]),
+        }
+        for w in weeks
+    ]
+    return {
+        "start_date": str(start_date),
+        "end_date": str(end_date - timedelta(days=1)),
+        "label": label or f"{start_date} to {end_date - timedelta(days=1)}",
+        "total_allowance": snapshot["total_allowance"],
+        "total_spent": snapshot["total_spent"],
+        "total_saved": snapshot["total_allowance"] - snapshot["total_spent"],
+        "breakdown": cat_totals,
+        "weeks": weekly_data,
+        "num_weeks": len(weekly_data),
+        "raw_weeks": weeks,
+    }
+
+
+def get_yearly_summary(user_id, year):
+    start_date = datetime(year, 1, 1).date()
+    end_date = datetime(year + 1, 1, 1).date()
+    weeks, breakdown = get_monthly_summary(user_id, start_date, end_date)
+    snapshot = build_savings_snapshot(weeks, finalized_only=False)
+
+    months = []
+    for month in range(1, 13):
+        month_start = datetime(year, month, 1).date()
+        month_end = (
+            datetime(year + 1, 1, 1).date() if month == 12
+            else datetime(year, month + 1, 1).date()
+        )
+        month_weeks = [
+            w for w in weeks
+            if month_start <= w["week_start_date"] < month_end
+        ]
+        if not month_weeks:
+            continue
+        allowance = sum(as_float(w["allowance"]) for w in month_weeks)
+        spent = sum(as_float(w["total_spent"]) for w in month_weeks)
+        months.append({
+            "month": month,
+            "label": datetime(year, month, 1).strftime("%b"),
+            "month_name": datetime(year, month, 1).strftime("%B %Y"),
+            "week_start_date": month_start,
+            "allowance": allowance,
+            "total_spent": spent,
+            "spent": spent,
+            "saved": allowance - spent,
+            "num_weeks": len(month_weeks),
+        })
+
+    from api.categorize import CATEGORIES
+    return {
+        "year": year,
+        "label": str(year),
+        "start_date": str(start_date),
+        "end_date": str(end_date - timedelta(days=1)),
+        "total_allowance": snapshot["total_allowance"],
+        "total_spent": snapshot["total_spent"],
+        "total_saved": snapshot["total_allowance"] - snapshot["total_spent"],
+        "breakdown": {c: as_float(breakdown.get(c, 0)) for c in CATEGORIES},
+        "months": months,
+        "num_months": len(months),
+        "num_weeks": len(weeks),
+        "raw_weeks": weeks,
+        "month_rows": months,
+    }
+
+
+def build_savings_snapshot(weeks, as_of=None, finalized_only=True):
+    from datetime import date as date_cls
+
+    as_of = as_of or date_cls.today()
+    total_allowance = 0.0
+    total_spent = 0.0
+    total_saved = 0.0
+    total_overspent = 0.0
+    weeks_under = 0
+    weeks_over = 0
+    weeks_even = 0
+    weeks_closed = 0
+    weeks_open = 0
+
+    for week in weeks:
+        allowance = as_float(week["allowance"])
+        spent = as_float(week.get("total_spent", week.get("spent", 0)))
+        week_end = week["week_end_date"]
+        if hasattr(week_end, "isoformat"):
+            closed = week_end < as_of
+        else:
+            closed = str(week_end) < str(as_of)
+
+        if not closed:
+            weeks_open += 1
+            if finalized_only:
+                continue
+
+        weeks_closed += 1 if closed else 0
+        total_allowance += allowance
+        total_spent += spent
+        diff = allowance - spent
+        if diff > 0:
+            total_saved += diff
+            weeks_under += 1
+        elif diff < 0:
+            total_overspent += -diff
+            weeks_over += 1
+        else:
+            weeks_even += 1
+
+    if not finalized_only:
+        weeks_closed = len(weeks) - weeks_open
+
+    return {
+        "total_allowance": total_allowance,
+        "total_spent": total_spent,
+        "total_saved": total_saved,
+        "lifetime_saved": total_saved,
+        "total_overspent": total_overspent,
+        "net_balance": total_saved - total_overspent,
+        "weeks_tracked": len(weeks),
+        "weeks_closed": weeks_closed,
+        "weeks_open": weeks_open,
+        "weeks_under": weeks_under,
+        "weeks_over": weeks_over,
+        "weeks_even": weeks_even,
+    }
+
+
+def build_savings_ledger(weeks, as_of=None):
+    from datetime import date as date_cls
+
+    as_of = as_of or date_cls.today()
+    snapshot = build_savings_snapshot(weeks, as_of=as_of)
+    entries = []
+    running_balance = 0.0
+    running_saved = 0.0
+    running_overspent = 0.0
+    running_spent = 0.0
+    running_allowance = 0.0
+    open_week = None
+
+    for week in weeks:
+        allowance = as_float(week["allowance"])
+        spent = as_float(week.get("total_spent", week.get("spent", 0)))
+        remaining = allowance - spent
+        week_start = week["week_start_date"]
+        week_end = week["week_end_date"]
+
+        if hasattr(week_end, "isoformat"):
+            closed = week_end < as_of
+        else:
+            closed = str(week_end) < str(as_of)
+
+        if hasattr(week_start, "strftime") and hasattr(week_end, "strftime"):
+            label = f"{week_start.strftime('%b %d')} – {week_end.strftime('%b %d, %Y')}"
+        else:
+            label = f"{week_start} – {week_end}"
+
+        if closed:
+            net = remaining
+            saved = max(net, 0.0)
+            overspent = max(-net, 0.0)
+            running_allowance += allowance
+            running_spent += spent
+            running_saved += saved
+            running_overspent += overspent
+            running_balance += net
+            entries.append({
+                "week_start": str(week_start),
+                "week_end": str(week_end),
+                "label": label,
+                "status": "closed",
+                "allowance": allowance,
+                "spent": spent,
+                "remaining": remaining,
+                "saved": saved,
+                "overspent": overspent,
+                "net": net,
+                "running_allowance": running_allowance,
+                "running_spent": running_spent,
+                "running_saved": running_saved,
+                "running_overspent": running_overspent,
+                "running_balance": running_balance,
+            })
+        else:
+            open_week = {
+                "week_start": str(week_start),
+                "week_end": str(week_end),
+                "label": label,
+                "status": "in_progress",
+                "allowance": allowance,
+                "spent": spent,
+                "remaining": remaining,
+                "saved": 0.0,
+                "overspent": 0.0,
+                "net": 0.0,
+                "on_track": remaining >= 0,
+                "running_balance": running_balance,
+            }
+            entries.append({
+                **open_week,
+                "running_allowance": running_allowance,
+                "running_spent": running_spent,
+                "running_saved": running_saved,
+                "running_overspent": running_overspent,
+            })
+
+    return {
+        **snapshot,
+        "running_balance": running_balance,
+        "open_week": open_week,
+        "entries": entries,
+    }
+
+
+def get_savings_snapshot(user_id, start_date, end_date):
+    weeks, _ = get_monthly_summary(user_id, start_date, end_date)
+    return build_savings_snapshot(weeks), weeks
+
+
+def get_savings_ledger(user_id, start_date, end_date):
+    weeks, _ = get_monthly_summary(user_id, start_date, end_date)
+    return build_savings_ledger(weeks), weeks
+
+
 def get_budgets_by_month(user_id, start_date, end_date):
     weeks, _ = get_monthly_summary(user_id, start_date, end_date)
     return weeks
@@ -692,16 +979,11 @@ def day_expense_payload(cursor, expense_id):
     if not row:
         return None
     cursor.execute(
-        'SELECT id, name, amount, category FROM expense_items '
+        'SELECT id, name, amount, category, notes, tags FROM expense_items '
         'WHERE expense_id = %s ORDER BY created_at',
         (expense_id,),
     )
-    items = [{
-        "id": item["id"],
-        "name": item["name"],
-        "amount": as_float(item["amount"]),
-        "category": item["category"],
-    } for item in cursor.fetchall()]
+    items = [expense_item_dict(item) for item in cursor.fetchall()]
     breakdown = breakdown_from_row(row, items)
     return {
         **breakdown,
@@ -726,7 +1008,9 @@ def compute_budget_totals(cursor, budget_id):
     return {**breakdown, "spent": spent, "remaining": allowance - spent}
 
 
-def add_expense_item(budget_id, day, expense_date, name, amount, category):
+def add_expense_item(budget_id, day, expense_date, name, amount, category, notes="", tags=None):
+    notes = normalize_item_notes(notes)
+    tags = normalize_item_tags(tags)
     with db_transaction(dict_cursor=True) as cursor:
         cursor.execute(
             'SELECT id FROM expenses WHERE budget_id = %s AND day = %s',
@@ -744,10 +1028,10 @@ def add_expense_item(budget_id, day, expense_date, name, amount, category):
             expense_id = cursor.fetchone()['id']
 
         cursor.execute('''
-            INSERT INTO expense_items (expense_id, name, amount, category)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO expense_items (expense_id, name, amount, category, notes, tags)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING *
-        ''', (expense_id, name, amount, category))
+        ''', (expense_id, name, amount, category, notes, tags))
         item = dict(cursor.fetchone())
         update_expense_total(cursor, expense_id)
         day_expense = day_expense_payload(cursor, expense_id)
@@ -761,7 +1045,7 @@ def delete_expense_item(item_id, user_id):
 
     with db_transaction(dict_cursor=True) as cursor:
         cursor.execute('''
-            SELECT ei.expense_id, ei.name, ei.amount, ei.category, e.day, e.budget_id
+            SELECT ei.id, ei.expense_id, ei.name, ei.amount, ei.category, ei.notes, ei.tags, e.day, e.budget_id
             FROM expense_items ei
             JOIN expenses e ON ei.expense_id = e.id
             WHERE ei.id = %s
@@ -770,11 +1054,7 @@ def delete_expense_item(item_id, user_id):
         if not row:
             return False, None, None, None, None
 
-        deleted_item = {
-            'name': row['name'],
-            'amount': as_float(row['amount']),
-            'category': row['category'],
-        }
+        deleted_item = expense_item_dict(row)
         expense_id = row['expense_id']
         day = row['day']
         budget_id = row['budget_id']
@@ -796,7 +1076,7 @@ def delete_expense_item(item_id, user_id):
 def fetch_export_rows(user_id, start_date, end_date):
     with db_cursor(dict_cursor=True) as cursor:
         cursor.execute('''
-            SELECT e.expense_date, e.day, ei.name, ei.category, ei.amount
+            SELECT e.expense_date, e.day, ei.name, ei.category, ei.amount, ei.notes, ei.tags
             FROM expense_items ei
             JOIN expenses e ON ei.expense_id = e.id
             JOIN budgets b ON e.budget_id = b.id
@@ -810,12 +1090,16 @@ def fetch_export_rows(user_id, start_date, end_date):
                 'name': row['name'],
                 'category': row['category'],
                 'amount': as_float(row['amount']),
+                'notes': row.get('notes') or '',
+                'tags': list(row['tags'] or []),
             }
             for row in cursor.fetchall()
         ]
 
 
-def update_expense_item(item_id, user_id, name, amount, category):
+def update_expense_item(item_id, user_id, name, amount, category, notes="", tags=None):
+    notes = normalize_item_notes(notes)
+    tags = normalize_item_tags(tags)
     if not expense_item_belongs_to_user(item_id, user_id):
         return None, None, None, None
 
@@ -835,10 +1119,10 @@ def update_expense_item(item_id, user_id, name, amount, category):
         budget_id = row['budget_id']
         cursor.execute('''
             UPDATE expense_items
-            SET name = %s, amount = %s, category = %s
+            SET name = %s, amount = %s, category = %s, notes = %s, tags = %s
             WHERE id = %s
             RETURNING *
-        ''', (name, amount, category, item_id))
+        ''', (name, amount, category, notes, tags, item_id))
         item = dict(cursor.fetchone())
         update_expense_total(cursor, expense_id)
         day_expense = day_expense_payload(cursor, expense_id)
@@ -1213,3 +1497,154 @@ def process_recurring_expenses(user_id, week_start, week_end):
                 changed = True
 
     return changed
+
+
+def _serialize_savings_goal(row):
+    target = as_float(row["target_amount"])
+    current = as_float(row["current_amount"])
+    progress = min((current / target) * 100, 100.0) if target > 0 else 0.0
+    remaining = max(target - current, 0.0)
+    deadline = row.get("deadline")
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "target_amount": target,
+        "current_amount": current,
+        "deadline": str(deadline) if deadline else None,
+        "status": row["status"],
+        "progress_pct": round(progress, 1),
+        "remaining": remaining,
+        "is_complete": current >= target or row["status"] == "completed",
+        "created_at": str(row["created_at"]) if row.get("created_at") else None,
+        "updated_at": str(row["updated_at"]) if row.get("updated_at") else None,
+    }
+
+
+def get_savings_goals(user_id, include_archived=False):
+    with db_cursor(dict_cursor=True) as cursor:
+        if include_archived:
+            cursor.execute(
+                "SELECT id, name, target_amount, current_amount, deadline, status, "
+                "created_at, updated_at FROM savings_goals "
+                "WHERE user_id = %s ORDER BY "
+                "CASE status WHEN 'active' THEN 0 WHEN 'completed' THEN 1 ELSE 2 END, "
+                "created_at DESC",
+                (user_id,),
+            )
+        else:
+            cursor.execute(
+                "SELECT id, name, target_amount, current_amount, deadline, status, "
+                "created_at, updated_at FROM savings_goals "
+                "WHERE user_id = %s AND status != 'archived' ORDER BY "
+                "CASE status WHEN 'active' THEN 0 WHEN 'completed' THEN 1 ELSE 2 END, "
+                "created_at DESC",
+                (user_id,),
+            )
+        return [_serialize_savings_goal(dict(row)) for row in cursor.fetchall()]
+
+
+def get_savings_goal(goal_id, user_id):
+    with db_cursor(dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT id, name, target_amount, current_amount, deadline, status, "
+            "created_at, updated_at FROM savings_goals "
+            "WHERE id = %s AND user_id = %s",
+            (goal_id, user_id),
+        )
+        row = cursor.fetchone()
+        return _serialize_savings_goal(dict(row)) if row else None
+
+
+def create_savings_goal(user_id, name, target_amount, current_amount=0, deadline=None):
+    current_amount = max(as_float(current_amount), 0.0)
+    target_amount = as_float(target_amount)
+    status = "completed" if current_amount >= target_amount else "active"
+    with db_cursor(commit=True, dict_cursor=True) as cursor:
+        cursor.execute(
+            "INSERT INTO savings_goals "
+            "(user_id, name, target_amount, current_amount, deadline, status) "
+            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (user_id, name, target_amount, current_amount, deadline, status),
+        )
+        return cursor.fetchone()["id"]
+
+
+def update_savings_goal(goal_id, user_id, **fields):
+    allowed = {"name", "target_amount", "current_amount", "deadline", "status"}
+    updates = []
+    params = []
+    for key, value in fields.items():
+        if key not in allowed:
+            continue
+        if key == "deadline" and value == "":
+            value = None
+        updates.append(f"{key} = %s")
+        params.append(value)
+    if not updates:
+        return False
+    updates.append("updated_at = CURRENT_TIMESTAMP")
+    params.extend([goal_id, user_id])
+    with db_cursor(commit=True, dict_cursor=True) as cursor:
+        cursor.execute(
+            f"UPDATE savings_goals SET {', '.join(updates)} "
+            f"WHERE id = %s AND user_id = %s "
+            f"RETURNING id, name, target_amount, current_amount, deadline, status, "
+            f"created_at, updated_at",
+            params,
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        goal = dict(row)
+        if goal["status"] != "archived":
+            current = as_float(goal["current_amount"])
+            target = as_float(goal["target_amount"])
+            new_status = "completed" if current >= target else "active"
+            if new_status != goal["status"]:
+                cursor.execute(
+                    "UPDATE savings_goals SET status = %s, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE id = %s AND user_id = %s "
+                    "RETURNING id, name, target_amount, current_amount, deadline, status, "
+                    "created_at, updated_at",
+                    (new_status, goal_id, user_id),
+                )
+                goal = dict(cursor.fetchone())
+        return _serialize_savings_goal(goal)
+
+
+def contribute_to_savings_goal(goal_id, user_id, amount):
+    amount = as_float(amount)
+    if amount <= 0:
+        return None
+    with db_cursor(commit=True, dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT id, name, target_amount, current_amount, deadline, status, "
+            "created_at, updated_at FROM savings_goals "
+            "WHERE id = %s AND user_id = %s AND status != 'archived' FOR UPDATE",
+            (goal_id, user_id),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        goal = dict(row)
+        new_current = as_float(goal["current_amount"]) + amount
+        target = as_float(goal["target_amount"])
+        new_status = "completed" if new_current >= target else "active"
+        cursor.execute(
+            "UPDATE savings_goals SET current_amount = %s, status = %s, "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = %s AND user_id = %s "
+            "RETURNING id, name, target_amount, current_amount, deadline, status, "
+            "created_at, updated_at",
+            (new_current, new_status, goal_id, user_id),
+        )
+        return _serialize_savings_goal(dict(cursor.fetchone()))
+
+
+def delete_savings_goal(goal_id, user_id):
+    with db_cursor(commit=True) as cursor:
+        cursor.execute(
+            "DELETE FROM savings_goals WHERE id = %s AND user_id = %s",
+            (goal_id, user_id),
+        )
+        return cursor.rowcount > 0

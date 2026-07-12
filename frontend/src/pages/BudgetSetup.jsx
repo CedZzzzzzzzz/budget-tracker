@@ -597,7 +597,7 @@ export default function BudgetSetup() {
                         }`}
                         title={d}
                       >
-                        {d.slice(0, 2)}
+                        {d.slice(0, 3)}
                       </button>
                     ))}
                   </div>

@@ -1,17 +1,6 @@
 import { useMemo, useState, useId } from 'react';
-import { CATEGORIES, CATEGORY_LABELS } from '../utils/categorize';
+import { CATEGORIES, CATEGORY_LABELS, categoryColor } from '../utils/categorize';
 import CategoryIcon from './CategoryIcon';
-
-const CHART_COLORS = {
-  fare: '#8b5cf6',
-  food: '#d946ef',
-  groceries: '#34d399',
-  bills: '#fbbf24',
-  shopping: '#38bdf8',
-  entertainment: '#f472b6',
-  health: '#fb7185',
-  other: '#a78bfa',
-};
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -44,7 +33,7 @@ export function CategoryDonutChart({ totals }) {
         category,
         label: CATEGORY_LABELS[category],
         value: Number(totals[category]) || 0,
-        color: CHART_COLORS[category],
+        color: categoryColor(category),
       }))
       .filter((item) => item.value > 0);
     const total = items.reduce((sum, item) => sum + item.value, 0);
@@ -222,7 +211,7 @@ export function SpendingByDayChart({ expenses, todayIndex = 6 }) {
   const data = useMemo(
     () => DAYS.map((day, i) => ({
       day,
-      short: day.slice(0, 2),
+      short: day.slice(0, 3),
       value: Number(expenses[day]?.total) || 0,
       isToday: i === todayIndex,
       isFuture: i > todayIndex,

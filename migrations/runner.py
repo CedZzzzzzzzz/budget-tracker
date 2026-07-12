@@ -68,6 +68,8 @@ MIGRATIONS = [
     ("005_money_numeric", migrate_money_columns),
     ("006_features", lambda cursor: execute_sql_file(cursor, "005_features.sql")),
     ("006_features_constraints", migrate_feature_constraints),
+    ("007_savings_goals", lambda cursor: execute_sql_file(cursor, "006_savings_goals.sql")),
+    ("008_expense_notes_tags", lambda cursor: execute_sql_file(cursor, "007_expense_notes_tags.sql")),
 ]
 
 

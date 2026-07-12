@@ -5,6 +5,8 @@ import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import Settings from './pages/Settings';
 import BudgetSetup from './pages/BudgetSetup';
+import Savings from './pages/Savings';
+import Reports from './pages/Reports';
 import AppLayout from './components/AppLayout';
 
 export default function App() {
@@ -17,6 +19,8 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/dashboard/monthly" element={<Dashboard monthly />} />
+          <Route path="/reports" element={<Reports />} />
+          <Route path="/savings" element={<Savings />} />
           <Route path="/budget" element={<BudgetSetup />} />
           <Route path="/settings" element={<Settings />} />
         </Route>

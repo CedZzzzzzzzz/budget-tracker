@@ -30,14 +30,14 @@
     "other": "more"
   },
   "colors": {
-    "fare": "bg-violet-500/15 text-violet-300 border-violet-500/20",
-    "food": "bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/20",
-    "groceries": "bg-emerald-500/15 text-emerald-300 border-emerald-500/20",
-    "bills": "bg-amber-500/15 text-amber-300 border-amber-500/20",
-    "shopping": "bg-sky-500/15 text-sky-300 border-sky-500/20",
-    "entertainment": "bg-pink-500/15 text-pink-300 border-pink-500/20",
-    "health": "bg-rose-500/15 text-rose-300 border-rose-500/20",
-    "other": "bg-purple-500/15 text-purple-300 border-purple-500/20"
+    "fare": "#8b5cf6",
+    "food": "#d946ef",
+    "groceries": "#34d399",
+    "bills": "#fbbf24",
+    "shopping": "#38bdf8",
+    "entertainment": "#fb923c",
+    "health": "#f472b6",
+    "other": "#a78bfa"
   },
   "priority": [
     "health",

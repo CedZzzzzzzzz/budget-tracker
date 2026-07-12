@@ -15,6 +15,20 @@ export const NAV_ITEMS = [
     subtitle: 'Review spending trends across the month',
   },
   {
+    id: 'reports',
+    path: '/reports',
+    label: 'Reports',
+    title: 'Reports',
+    subtitle: 'Custom date ranges and yearly PDF export',
+  },
+  {
+    id: 'savings',
+    path: '/savings',
+    label: 'Savings',
+    title: 'Savings',
+    subtitle: 'Goals and running balance of saved weeks',
+  },
+  {
     id: 'budget',
     path: '/budget',
     label: 'Budget',

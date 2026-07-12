@@ -19,6 +19,33 @@ import {
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+function tagsToInput(tags) {
+  return Array.isArray(tags) ? tags.join(', ') : (tags || '');
+}
+
+function ItemMeta({ notes, tags }) {
+  const hasNotes = Boolean(notes?.trim());
+  const list = Array.isArray(tags) ? tags.filter(Boolean) : [];
+  if (!hasNotes && !list.length) return null;
+  return (
+    <div className="mt-1 space-y-1">
+      {hasNotes && <p className="text-xs text-purple-muted">{notes}</p>}
+      {list.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {list.map((tag) => (
+            <span
+              key={tag}
+              className="rounded-md bg-purple-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-purple-primary-light"
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const ICON = 'h-[18px] w-[18px]';
 const svgProps = {
   viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
@@ -349,11 +376,15 @@ function WeeklyTracker({
   const [selDay, setSelDay] = useState(DAYS[today]);
   const [itemName, setItemName] = useState('');
   const [itemAmount, setItemAmount] = useState('');
+  const [itemNotes, setItemNotes] = useState('');
+  const [itemTags, setItemTags] = useState('');
   const [category, setCategory] = useState('other');
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
   const [editAmount, setEditAmount] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editTags, setEditTags] = useState('');
   const [editCategory, setEditCategory] = useState('other');
   const [savingEdit, setSavingEdit] = useState(false);
   const [modalDay, setModalDay] = useState(null);
@@ -369,6 +400,8 @@ function WeeklyTracker({
     setEditingId(null);
     setItemName('');
     setItemAmount('');
+    setItemNotes('');
+    setItemTags('');
     setCategory('other');
   };
 
@@ -385,12 +418,21 @@ function WeeklyTracker({
     try {
       const r = await apiFetch('/api/add-expense-item', {
         method: 'POST',
-        body: JSON.stringify({ day: selDay, name, amount, category }),
+        body: JSON.stringify({
+          day: selDay,
+          name,
+          amount,
+          category,
+          notes: itemNotes,
+          tags: itemTags,
+        }),
       });
       if (r.ok) {
         const d = await r.json();
         setItemName('');
         setItemAmount('');
+        setItemNotes('');
+        setItemTags('');
         setCategory('other');
         onBudgetPatch(d);
       } else {
@@ -425,6 +467,8 @@ function WeeklyTracker({
     setEditingId(item.id);
     setEditName(item.name);
     setEditAmount(String(item.amount));
+    setEditNotes(item.notes || '');
+    setEditTags(tagsToInput(item.tags));
     setEditCategory(item.category);
     requestAnimationFrame(() => {
       logExpenseRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -435,6 +479,8 @@ function WeeklyTracker({
     setEditingId(null);
     setEditName('');
     setEditAmount('');
+    setEditNotes('');
+    setEditTags('');
     setEditCategory('other');
   };
 
@@ -447,7 +493,13 @@ function WeeklyTracker({
     try {
       const r = await apiFetch(`/api/edit-expense-item/${itemId}`, {
         method: 'PUT',
-        body: JSON.stringify({ name, amount, category: editCategory }),
+        body: JSON.stringify({
+          name,
+          amount,
+          category: editCategory,
+          notes: editNotes,
+          tags: editTags,
+        }),
       });
       if (r.ok) {
         cancelEdit();
@@ -471,6 +523,20 @@ function WeeklyTracker({
             <input type="text" className={input} value={editName} onChange={(e) => setEditName(e.target.value)} />
             <input type="number" className={input} min="0" step="0.01" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} />
           </div>
+          <input
+            type="text"
+            className={input}
+            placeholder="e.g. Split with Ana"
+            value={editNotes}
+            onChange={(e) => setEditNotes(e.target.value)}
+          />
+          <input
+            type="text"
+            className={input}
+            placeholder="e.g. work, gcash"
+            value={editTags}
+            onChange={(e) => setEditTags(e.target.value)}
+          />
           <div className="flex flex-wrap items-center gap-2">
             <select
               value={editCategory}
@@ -493,12 +559,15 @@ function WeeklyTracker({
     }
 
     return (
-      <div key={item.id} className="flex items-center justify-between glass-surface rounded-xl px-3 py-2.5">
-        <div className="flex items-center gap-2">
-          <CategoryBadge category={item.category} />
-          <span className="text-sm text-purple-text-dim">{item.name}</span>
+      <div key={item.id} className="flex items-start justify-between gap-2 glass-surface rounded-xl px-3 py-2.5">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <CategoryBadge category={item.category} />
+            <span className="truncate text-sm text-purple-text-dim">{item.name}</span>
+          </div>
+          <ItemMeta notes={item.notes} tags={item.tags} />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2 pt-0.5">
           <span className="text-sm font-medium text-purple-primary-light">₱{item.amount.toFixed(2)}</span>
           <button type="button" className="inline-flex text-purple-muted transition hover:text-purple-primary-light" onClick={() => startEdit(item)} aria-label="Edit item" title="Edit">
             <EditIcon />
@@ -612,7 +681,7 @@ function WeeklyTracker({
                   onClick={() => selectDay(day, i)}
                   disabled={disabled}
                 >
-                  {day.slice(0, 2)}
+                  {day.slice(0, 3)}
                 </button>
               );
             })}
@@ -636,6 +705,29 @@ function WeeklyTracker({
                   <button type="button" className={`${btnPrimary} w-full sm:w-auto`} onClick={addItem} disabled={adding}>
                     {adding ? '…' : 'Add'}
                   </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className={label}>Note</label>
+                  <input
+                    type="text"
+                    className={input}
+                    placeholder="e.g. Split with Ana"
+                    value={itemNotes}
+                    onChange={(e) => setItemNotes(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className={label}>Tags</label>
+                  <input
+                    type="text"
+                    className={input}
+                    placeholder="e.g. work, gcash"
+                    value={itemTags}
+                    onChange={(e) => setItemTags(e.target.value)}
+                  />
                 </div>
               </div>
 
@@ -848,9 +940,12 @@ function DayDetailModal({ day, expense, isToday, onDeleteItem, onEditItem, onDel
                   </div>
                   <div className="space-y-1.5">
                     {its.map((item) => (
-                      <div key={item.id} className={`${cardInner} flex items-center justify-between gap-3 px-3 py-2.5`}>
-                        <span className="truncate text-sm text-purple-text-dim">{item.name}</span>
-                        <div className="flex shrink-0 items-center gap-2">
+                      <div key={item.id} className={`${cardInner} flex items-start justify-between gap-3 px-3 py-2.5`}>
+                        <div className="min-w-0">
+                          <span className="block truncate text-sm text-purple-text-dim">{item.name}</span>
+                          <ItemMeta notes={item.notes} tags={item.tags} />
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2 pt-0.5">
                           <span className="text-sm font-medium text-purple-primary-light">₱{item.amount.toFixed(2)}</span>
                           <button
                             type="button"
@@ -1368,12 +1463,19 @@ export default function Dashboard({ monthly = false }) {
 
   const handleUndoDelete = useCallback(async () => {
     if (!undoItem) return;
-    const { day, name, amount, category } = undoItem;
+    const { day, name, amount, category, notes, tags } = undoItem;
     setUndoItem(null);
     try {
       const r = await apiFetch('/api/add-expense-item', {
         method: 'POST',
-        body: JSON.stringify({ day, name, amount, category }),
+        body: JSON.stringify({
+          day,
+          name,
+          amount,
+          category,
+          notes: notes || '',
+          tags: tags || [],
+        }),
       });
       if (r.ok) handleBudgetPatch(await r.json());
     } catch {

@@ -90,7 +90,7 @@ if __name__ == "__main__":
 
     if is_dev:
         print("\n" + "="*50)
-        print("💳 BUDGET TRACKER 💳")
+        print("BUDGET TRACKER")
         print("="*50)
         print(f"http://localhost:5000")
         print(f"Week: {week_start} to {week_end}")
