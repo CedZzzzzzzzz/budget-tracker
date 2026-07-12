@@ -360,7 +360,11 @@ def register():
             return jsonify({"error": "Registration failed"}), 500
         session["user_id"]  = user_id
         session["username"] = username
-        return jsonify({"success": True, "username": username})
+        return jsonify({
+            "success": True,
+            "username": username,
+            "onboarding_completed": False,
+        })
     return jsonify({"error": "Registration failed"}), 500
 
 
@@ -384,7 +388,11 @@ def login():
 
     session["user_id"]  = user["id"]
     session["username"] = user["username"]
-    return jsonify({"success": True, "username": user["username"]})
+    return jsonify({
+        "success": True,
+        "username": user["username"],
+        "onboarding_completed": bool(user.get("onboarding_completed_at")),
+    })
 
 
 @api.route("/logout", methods=["POST"])
@@ -395,9 +403,41 @@ def logout():
 
 @api.route("/check-auth", methods=["GET"])
 def check_auth():
-    if "user_id" in session:
-        return jsonify({"authenticated": True, "username": session.get("username")})
-    return jsonify({"authenticated": False})
+    if "user_id" not in session:
+        return jsonify({"authenticated": False})
+    user_id = session.get("user_id")
+    return jsonify({
+        "authenticated": True,
+        "username": session.get("username"),
+        "onboarding_completed": db.is_onboarding_completed(user_id),
+    })
+
+
+@api.route("/onboarding/complete", methods=["POST"])
+@login_required
+@handle_api_errors
+def complete_onboarding_route():
+    user_id = get_user_id()
+    data = request.get_json(silent=True) or {}
+    allowance_raw = data.get("allowance")
+    if allowance_raw is not None and allowance_raw != "":
+        allowance = float(allowance_raw)
+        if allowance <= 0:
+            return jsonify({"error": "Allowance must be greater than 0"}), 400
+        week_start, week_end = get_week_range()
+        existing = db.get_budget_by_week(user_id, week_start, week_end)
+        if existing:
+            if not db.update_budget(existing["id"], user_id, allowance):
+                return jsonify({"error": "Budget not found."}), 404
+        else:
+            db.create_budget(user_id, week_start, week_end, allowance)
+
+    completed_at = db.complete_onboarding(user_id)
+    return jsonify({
+        "success": True,
+        "onboarding_completed": True,
+        "onboarding_completed_at": str(completed_at) if completed_at else None,
+    })
 
 
 @api.route("/profile", methods=["GET"])

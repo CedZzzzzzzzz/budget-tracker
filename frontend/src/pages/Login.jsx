@@ -205,7 +205,10 @@ export default function Login() {
   useEffect(() => {
     apiFetch('/api/check-auth')
       .then((r) => r.json())
-      .then((d) => { if (d.authenticated) navigate('/dashboard'); })
+      .then((d) => {
+        if (!d.authenticated) return;
+        navigate('/dashboard');
+      })
       .catch(() => {});
   }, [navigate]);
 

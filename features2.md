@@ -7,7 +7,7 @@ Candidates to pick from — not ordered. Check off here and in [features.md](fea
 - [ ] Weekly summary email / push notification
 - [x] Notes / tags on individual expense items (e.g. note “split with Ana”, tags `work, gcash`)
 - [ ] Custom user-defined categories (beyond the fixed 8)
-- [ ] Onboarding flow for first-time users
+- [x] Onboarding flow for first-time users (guided tour that explains each page)
 - [x] Yearly summary view and yearly PDF export
 - [x] Date-range custom reports (not just week/month)
 - [ ] Spending anomaly detection (flag unusual spikes)
@@ -31,4 +31,4 @@ Candidates to pick from — not ordered. Check off here and in [features.md](fea
 - [ ] Structured logging & error monitoring (e.g. Sentry)
 - [ ] Admin dashboard (usage metrics, user management)
 
-**Just shipped:** Notes/tags on expenses · Date-range reports · Yearly summary + PDF · Savings goals · Savings ledger.
+**Just shipped:** Onboarding · Notes/tags on expenses · Date-range reports · Yearly summary + PDF · Savings goals · Savings ledger.

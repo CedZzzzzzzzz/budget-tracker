@@ -2,6 +2,7 @@ import { useState, useEffect, createContext, useContext, useMemo } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api';
 import { NAV_ITEMS, matchNavItem } from '../utils/nav';
+import OnboardingTour from './OnboardingTour';
 
 const ICON = 'h-[22px] w-[22px]';
 const svgProps = {
@@ -98,9 +99,9 @@ export function useAppLayout() {
   return ctx;
 }
 
-function SidebarNav({ onNavigate }) {
+function SidebarNav({ onNavigate, tourActive }) {
   const linkCls = ({ isActive }) =>
-    `app-nav-item ${isActive ? 'app-nav-item--active' : ''}`;
+    `app-nav-item ${isActive ? 'app-nav-item--active' : ''} ${tourActive && isActive ? 'ring-1 ring-purple-primary/50' : ''}`;
 
   return (
     <nav className="flex flex-1 flex-col gap-1 px-2">
@@ -128,11 +129,14 @@ export default function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
+  const [authReady, setAuthReady] = useState(false);
+  const [onboardingCompleted, setOnboardingCompleted] = useState(true);
   const [darkMode, setDarkMode] = useState(localStorage.getItem('darkMode') !== 'false');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [headerActions, setHeaderActions] = useState(null);
 
   const activeNav = matchNavItem(location.pathname);
+  const tourActive = authReady && !onboardingCompleted;
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
@@ -146,13 +150,24 @@ export default function AppLayout() {
   }, [location.pathname]);
 
   useEffect(() => {
+    let cancelled = false;
     apiFetch('/api/check-auth')
       .then((r) => r.json())
       .then((d) => {
-        if (d.authenticated && d.username) setUsername(d.username);
+        if (cancelled) return;
+        if (!d.authenticated) {
+          navigate('/');
+          return;
+        }
+        if (d.username) setUsername(d.username);
+        setOnboardingCompleted(Boolean(d.onboarding_completed));
+        setAuthReady(true);
       })
-      .catch(() => {});
-  }, []);
+      .catch(() => {
+        if (!cancelled) navigate('/');
+      });
+    return () => { cancelled = true; };
+  }, [navigate]);
 
   const toggleTheme = () => {
     const next = !darkMode;
@@ -166,9 +181,22 @@ export default function AppLayout() {
   };
 
   const outletContext = useMemo(
-    () => ({ setHeaderActions, username }),
-    [username],
+    () => ({
+      setHeaderActions,
+      username,
+      markOnboardingDone: () => setOnboardingCompleted(true),
+      onboardingActive: tourActive,
+    }),
+    [username, tourActive],
   );
+
+  if (!authReady) {
+    return (
+      <div className="app-shell flex min-h-screen items-center justify-center">
+        <p className="text-sm text-purple-soft">Loading…</p>
+      </div>
+    );
+  }
 
   return (
     <LayoutContext.Provider value={outletContext}>
@@ -187,7 +215,10 @@ export default function AppLayout() {
             <span className="app-sidebar-title">Budget</span>
           </div>
 
-          <SidebarNav onNavigate={() => setSidebarOpen(false)} />
+          <SidebarNav
+            onNavigate={() => setSidebarOpen(false)}
+            tourActive={tourActive}
+          />
 
           <div className="app-sidebar-footer">
             {username && (
@@ -239,10 +270,17 @@ export default function AppLayout() {
             )}
           </header>
 
-          <main className="app-content">
+          <main className={`app-content ${tourActive ? 'pb-44' : ''}`}>
             <Outlet context={outletContext} />
           </main>
         </div>
+
+        {tourActive && (
+          <OnboardingTour
+            username={username}
+            onComplete={() => setOnboardingCompleted(true)}
+          />
+        )}
       </div>
     </LayoutContext.Provider>
   );

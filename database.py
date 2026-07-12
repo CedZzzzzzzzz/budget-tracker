@@ -267,6 +267,30 @@ def get_user_by_email(email):
     return None
 
 
+def is_onboarding_completed(user_id):
+    user = get_user_by_id(user_id)
+    return bool(user and user.get("onboarding_completed_at"))
+
+
+def complete_onboarding(user_id):
+    with db_cursor(commit=True, dict_cursor=True) as cursor:
+        cursor.execute(
+            "UPDATE users SET onboarding_completed_at = CURRENT_TIMESTAMP "
+            "WHERE id = %s AND onboarding_completed_at IS NULL "
+            "RETURNING onboarding_completed_at",
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        if row:
+            return row["onboarding_completed_at"]
+        cursor.execute(
+            "SELECT onboarding_completed_at FROM users WHERE id = %s",
+            (user_id,),
+        )
+        existing = cursor.fetchone()
+        return existing["onboarding_completed_at"] if existing else None
+
+
 def verify_password(user, password):
     return check_password_hash(user["password_hash"], password)
 
