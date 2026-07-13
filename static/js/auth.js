@@ -22,6 +22,8 @@ showLoginLink.addEventListener('click', (e) => {
 loginBtn.addEventListener('click', async () => {
     const username = document.getElementById('loginUsername').value.trim();
     const password = document.getElementById('loginPassword').value;
+    const rememberEl = document.getElementById('loginRemember');
+    const rememberMe = rememberEl ? rememberEl.checked : false;
     const errorDiv = document.getElementById('loginError');
 
     errorDiv.classList.add('hidden');
@@ -36,7 +38,8 @@ loginBtn.addEventListener('click', async () => {
         const response = await fetch('/api/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
+            credentials: 'include',
+            body: JSON.stringify({ username, password, remember_me: rememberMe })
         });
 
         const data = await response.json();

@@ -6,7 +6,7 @@ Candidates to pick from — not ordered. Check off here and in [features.md](fea
 - [ ] Comparison view (this month vs last month)
 - [ ] Weekly summary email / push notification
 - [x] Notes / tags on individual expense items (e.g. note “split with Ana”, tags `work, gcash`)
-- [ ] Custom user-defined categories (beyond the fixed 8)
+- [x] Custom user-defined categories (beyond the fixed 8)
 - [x] Onboarding flow for first-time users (guided tour that explains each page)
 - [x] Yearly summary view and yearly PDF export
 - [x] Date-range custom reports (not just week/month)
@@ -18,11 +18,11 @@ Candidates to pick from — not ordered. Check off here and in [features.md](fea
 - [ ] Multi-currency support (currently peso-only, `&#8369;` is hardcoded)
 - [ ] Income sources beyond a single weekly allowance
 - [ ] Email verification on registration
-- [ ] "Remember me" / persistent login option
+- [x] "Remember me" / persistent login option
 - [ ] Two-factor authentication (2FA)
 - [ ] Account deletion (self-service)
 - [ ] Social / OAuth login (Google)
-- [ ] Keyboard shortcuts for fast entry
+- [x] Keyboard shortcuts for fast entry
 - [ ] Progressive Web App (installable, offline-capable)
 - [ ] Localization / i18n (multi-language)
 - [ ] Accessibility pass (ARIA, focus states, screen-reader support)
@@ -31,4 +31,4 @@ Candidates to pick from — not ordered. Check off here and in [features.md](fea
 - [ ] Structured logging & error monitoring (e.g. Sentry)
 - [ ] Admin dashboard (usage metrics, user management)
 
-**Just shipped:** Onboarding · Notes/tags on expenses · Date-range reports · Yearly summary + PDF · Savings goals · Savings ledger.
+**Just shipped:** Remember me · Keyboard shortcuts · Custom categories · Onboarding · Notes/tags on expenses · Date-range reports · Yearly summary + PDF · Savings goals · Savings ledger.

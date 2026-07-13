@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch, downloadCsv, openPdf, runExport } from '../api';
 import CategoryBadge from '../components/CategoryBadge';
-import { CATEGORIES } from '../utils/categorize';
+import { useCategories } from '../components/CategoriesContext';
 import {
   btnPrimary, card, cardInner, input, label, statLabel, subtext,
 } from '../utils/theme';
@@ -56,7 +56,8 @@ function SummaryTiles({ allowance, spent, saved }) {
 }
 
 function CategoryBreakdown({ breakdown }) {
-  const rows = CATEGORIES.filter((c) => (breakdown?.[c] || 0) > 0);
+  const { categories } = useCategories();
+  const rows = categories.filter((c) => (breakdown?.[c] || 0) > 0);
   if (!rows.length) {
     return <p className={`py-6 text-center ${subtext}`}>No expenses in this period</p>;
   }

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 
 import { useNavigate } from 'react-router-dom';
 
-import { apiFetch, parseApiResponse, primeCsrf } from '../api';
+import { apiFetch, parseApiResponse, primeCsrf, checkAuth } from '../api';
 
 import {
 
@@ -73,9 +73,7 @@ export default function Settings() {
 
 
 
-    apiFetch('/api/check-auth')
-
-      .then((r) => r.json())
+    checkAuth()
 
       .then((d) => {
 

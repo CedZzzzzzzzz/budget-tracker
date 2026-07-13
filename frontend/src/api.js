@@ -1,5 +1,34 @@
 let csrfToken = null;
 
+const TAB_SESSION_KEY = 'bt_tab_session';
+const PERSISTENT_SESSION_KEY = 'bt_remember_session';
+
+export function markLoginSession(rememberMe) {
+  if (rememberMe) {
+    localStorage.setItem(PERSISTENT_SESSION_KEY, '1');
+    sessionStorage.removeItem(TAB_SESSION_KEY);
+  } else {
+    localStorage.removeItem(PERSISTENT_SESSION_KEY);
+    sessionStorage.setItem(TAB_SESSION_KEY, '1');
+  }
+  localStorage.removeItem('rememberMe');
+}
+
+export function clearLoginSession() {
+  localStorage.removeItem(PERSISTENT_SESSION_KEY);
+  sessionStorage.removeItem(TAB_SESSION_KEY);
+  localStorage.removeItem('rememberMe');
+}
+
+export function isClientSessionValid(rememberMe = null) {
+  if (rememberMe === true) return true;
+  if (rememberMe === false) {
+    return sessionStorage.getItem(TAB_SESSION_KEY) === '1';
+  }
+  return localStorage.getItem(PERSISTENT_SESSION_KEY) === '1'
+    || sessionStorage.getItem(TAB_SESSION_KEY) === '1';
+}
+
 async function ensureCsrf({ force = false } = {}) {
   if (!force && csrfToken) return csrfToken;
   const res = await fetch('/api/csrf-token', { credentials: 'include' });
@@ -11,6 +40,38 @@ async function ensureCsrf({ force = false } = {}) {
 
 export function clearCsrf() {
   csrfToken = null;
+}
+
+export async function logoutSession() {
+  try {
+    await apiFetch('/api/logout', { method: 'POST' });
+  } catch {
+  } finally {
+    clearLoginSession();
+    clearCsrf();
+  }
+}
+
+export async function checkAuth() {
+  const res = await apiFetch('/api/check-auth');
+  const data = await res.json().catch(() => ({}));
+  if (!data.authenticated) {
+    clearLoginSession();
+    return { authenticated: false };
+  }
+
+  if (data.remember_me) {
+    markLoginSession(true);
+    return data;
+  }
+
+  if (sessionStorage.getItem(TAB_SESSION_KEY) === '1') {
+    localStorage.removeItem(PERSISTENT_SESSION_KEY);
+    return data;
+  }
+
+  await logoutSession();
+  return { authenticated: false };
 }
 
 export async function parseApiResponse(res) {

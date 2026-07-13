@@ -1,12 +1,16 @@
 import { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { apiFetch, parseApiResponse, primeCsrf } from '../api';
+import { apiFetch, parseApiResponse, primeCsrf, checkAuth } from '../api';
+import { useCategories } from '../components/CategoriesContext';
 import CategoryBadge, { CategoryIconBox } from '../components/CategoryBadge';
 import {
-  CATEGORIES, CATEGORY_LABELS, CATEGORY_COLORS, categorizeItem,
+  categorizeItem,
+  categoryLabel,
+  CUSTOM_CATEGORY_COLORS,
 } from '../utils/categorize';
 import {
-  card, cardInner, glassSurface, input, label, btnPrimary, subtext,
+  card, cardInner, input, label, btnPrimary, subtext,
 } from '../utils/theme';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -58,7 +62,7 @@ function MiniRing({ value, max, size = 56, stroke = 5 }) {
 }
 
 function BudgetSnapshot({
-  limitsSet, limitsCategories, weeklyTotal, monthlyTotal, activeCount, totalCount, topRecurring,
+  limitsSet, limitsCategories, weeklyTotal, monthlyTotal, activeCount, totalCount, topRecurring, categoryCount,
 }) {
   const hasRecurring = activeCount > 0;
   const limitsLabel = limitsSet === 0
@@ -72,7 +76,7 @@ function BudgetSnapshot({
       <div className="budget-snapshot-grid">
         <div className="budget-snapshot-zone budget-snapshot-zone--limits">
           <div className="flex items-center gap-4">
-            <MiniRing value={limitsSet} max={CATEGORIES.length} />
+            <MiniRing value={limitsSet} max={categoryCount} />
             <div className="min-w-0">
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-purple-muted">Category caps</p>
               <p className="mt-0.5 text-base font-semibold text-purple-text">{limitsLabel}</p>
@@ -181,6 +185,12 @@ function RecurringCard({ item, onToggle, onDelete }) {
 
 export default function BudgetSetup() {
   const navigate = useNavigate();
+  const {
+    categories,
+    labels,
+    customCategories,
+    setCustomCategories,
+  } = useCategories();
   const [loading, setLoading] = useState(true);
   const [categoryLimits, setCategoryLimits] = useState({});
   const [limitsSaving, setLimitsSaving] = useState(false);
@@ -200,11 +210,17 @@ export default function BudgetSetup() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
 
+  const [customLabel, setCustomLabel] = useState('');
+  const [customColor, setCustomColor] = useState(CUSTOM_CATEGORY_COLORS[0]);
+  const [customSaving, setCustomSaving] = useState(false);
+  const [customError, setCustomError] = useState('');
+  const [customMessage, setCustomMessage] = useState('');
+  const [customModalOpen, setCustomModalOpen] = useState(false);
+
   useEffect(() => {
     primeCsrf();
 
-    apiFetch('/api/check-auth')
-      .then((r) => r.json())
+    checkAuth()
       .then((d) => {
         if (!d.authenticated) {
           navigate('/');
@@ -224,21 +240,22 @@ export default function BudgetSetup() {
         if (!d) return;
         if (d.category_limits) setCategoryLimits(d.category_limits);
         if (d.recurring_expenses) setRecurring(d.recurring_expenses);
+        if (d.custom_categories) setCustomCategories(d.custom_categories);
       })
       .catch(() => navigate('/'))
       .finally(() => setLoading(false));
-  }, [navigate]);
+  }, [navigate, setCustomCategories]);
 
   useEffect(() => {
-    if (recName.trim()) setRecCategory(categorizeItem(recName));
-  }, [recName]);
+    if (recName.trim()) setRecCategory(categorizeItem(recName, null, categories));
+  }, [recName, categories]);
 
   const limitsCategories = useMemo(
-    () => CATEGORIES.filter((c) => {
+    () => categories.filter((c) => {
       const v = categoryLimits[c];
       return v !== '' && v != null && Number(v) > 0;
     }),
-    [categoryLimits],
+    [categoryLimits, categories],
   );
 
   const limitsSet = limitsCategories.length;
@@ -275,7 +292,7 @@ export default function BudgetSetup() {
     setLimitsSaving(true);
     try {
       const limits = {};
-      for (const c of CATEGORIES) {
+      for (const c of categories) {
         const raw = categoryLimits[c];
         limits[c] = raw === '' || raw == null ? null : parseFloat(raw);
       }
@@ -294,6 +311,73 @@ export default function BudgetSetup() {
       setLimitsError('Could not reach the server.');
     } finally {
       setLimitsSaving(false);
+    }
+  };
+
+  const openCustomModal = () => {
+    setCustomError('');
+    setCustomMessage('');
+    setCustomModalOpen(true);
+  };
+
+  const closeCustomModal = () => {
+    setCustomModalOpen(false);
+    setCustomError('');
+    setCustomMessage('');
+    setCustomLabel('');
+  };
+
+  const addCustomCategory = async () => {
+    setCustomError('');
+    setCustomMessage('');
+    const name = customLabel.trim();
+    if (!name) {
+      setCustomError('Enter a category name.');
+      return;
+    }
+    setCustomSaving(true);
+    try {
+      const res = await apiFetch('/api/user-categories', {
+        method: 'POST',
+        body: JSON.stringify({ label: name, color: customColor }),
+      });
+      const { data, ok } = await parseApiResponse(res);
+      if (!ok) {
+        setCustomError(data.error || 'Could not create category.');
+        return;
+      }
+      setCustomCategories(data.custom_categories || []);
+      setCustomLabel('');
+      setCustomColor(CUSTOM_CATEGORY_COLORS[(customCategories.length + 1) % CUSTOM_CATEGORY_COLORS.length]);
+      setCustomMessage(`Added “${data.category?.label || name}”.`);
+    } catch {
+      setCustomError('Could not create category.');
+    } finally {
+      setCustomSaving(false);
+    }
+  };
+
+  const deleteCustomCategory = async (categoryId, categoryName) => {
+    if (!window.confirm(`Delete “${categoryName}”? Existing items move to Other.`)) return;
+    setCustomError('');
+    setCustomMessage('');
+    try {
+      const res = await apiFetch(`/api/user-categories/${categoryId}`, { method: 'DELETE' });
+      const { data, ok } = await parseApiResponse(res);
+      if (!ok) {
+        setCustomError(data.error || 'Could not delete category.');
+        return;
+      }
+      setCustomCategories(data.custom_categories || []);
+      setCategoryLimits((prev) => {
+        const next = { ...prev };
+        const removed = customCategories.find((c) => c.id === categoryId);
+        if (removed) delete next[removed.slug];
+        return next;
+      });
+      setCustomMessage('Category deleted.');
+    } catch {
+      setCustomError('Could not delete category.');
     }
   };
 
@@ -365,6 +449,17 @@ export default function BudgetSetup() {
     } catch {}
   };
 
+  useEffect(() => {
+    if (!customModalOpen) return undefined;
+    const onKey = (e) => e.key === 'Escape' && closeCustomModal();
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [customModalOpen]);
+
   if (loading) {
     return (
       <div className="flex min-h-[280px] items-center justify-center">
@@ -378,6 +473,7 @@ export default function BudgetSetup() {
       <BudgetSnapshot
         limitsSet={limitsSet}
         limitsCategories={limitsCategories}
+        categoryCount={categories.length}
         weeklyTotal={weeklyRecurringTotal}
         monthlyTotal={monthlyRecurringTotal}
         activeCount={activeRecurring.length}
@@ -387,7 +483,17 @@ export default function BudgetSetup() {
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         <section className={`${card} p-5`}>
-          <SectionTitle>
+          <SectionTitle
+            right={(
+              <button
+                type="button"
+                onClick={openCustomModal}
+                className="glass-btn-ghost rounded-lg px-3 py-1.5 text-xs font-medium text-purple-soft hover:text-purple-text"
+              >
+                + Custom
+              </button>
+            )}
+          >
             Category limits
           </SectionTitle>
           <p className={`mb-4 ${subtext}`}>
@@ -398,7 +504,7 @@ export default function BudgetSetup() {
           {limitsMessage && <div className="mb-4"><Alert type="success">{limitsMessage}</Alert></div>}
 
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {CATEGORIES.map((c) => {
+            {categories.map((c) => {
               const hasLimit = categoryLimits[c] !== '' && categoryLimits[c] != null && Number(categoryLimits[c]) > 0;
               return (
                 <div
@@ -408,7 +514,7 @@ export default function BudgetSetup() {
                   <CategoryIconBox category={c} />
                   <div className="min-w-0 flex-1">
                     <label className="block truncate text-xs font-medium text-purple-text-dim">
-                      {CATEGORY_LABELS[c]}
+                      {categoryLabel(c, labels)}
                     </label>
                     <div className="relative mt-1">
                       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-purple-muted">₱</span>
@@ -547,8 +653,8 @@ export default function BudgetSetup() {
                 <div>
                   <label className={label}>Category</label>
                   <select className={input} value={recCategory} onChange={(e) => setRecCategory(e.target.value)}>
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
+                    {categories.map((c) => (
+                      <option key={c} value={c}>{categoryLabel(c, labels)}</option>
                     ))}
                   </select>
                 </div>
@@ -632,6 +738,120 @@ export default function BudgetSetup() {
           )}
         </section>
       </div>
+
+      {customModalOpen && createPortal(
+        <div
+          className="fixed inset-0 z-[2000] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+          onClick={closeCustomModal}
+          style={{ animation: 'fadeIn 0.2s ease-out' }}
+        >
+          <div
+            className={`${card} flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-b-none rounded-t-3xl sm:rounded-3xl`}
+            onClick={(e) => e.stopPropagation()}
+            style={{ animation: 'fadeIn 0.28s cubic-bezier(0.16,1,0.3,1)' }}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-purple-primary/10 px-5 py-4">
+              <div>
+                <h3 className="text-base font-semibold tracking-tight text-purple-text">Custom categories</h3>
+                <p className="mt-0.5 text-xs text-purple-muted">
+                  Add your own beyond the built-in set.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-purple-muted transition hover:bg-purple-primary/10 hover:text-purple-text"
+                onClick={closeCustomModal}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="no-scrollbar space-y-4 overflow-y-auto px-5 py-4">
+              {customError && <Alert type="error">{customError}</Alert>}
+              {customMessage && <Alert type="success">{customMessage}</Alert>}
+
+              {customCategories.length > 0 && (
+                <ul className="space-y-2">
+                  {customCategories.map((cat) => (
+                    <li key={cat.id} className={`${cardInner} flex items-center justify-between gap-3 p-3`}>
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span
+                          className="h-7 w-7 shrink-0 rounded-lg border"
+                          style={{
+                            backgroundColor: `${cat.color}26`,
+                            borderColor: `${cat.color}47`,
+                          }}
+                          aria-hidden="true"
+                        />
+                        <p className="truncate text-sm font-medium text-purple-text">{cat.label}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => deleteCustomCategory(cat.id, cat.label)}
+                        className="shrink-0 text-xs font-medium text-purple-muted transition hover:text-red-400"
+                      >
+                        Delete
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="space-y-3">
+                <div>
+                  <label className={label}>Name</label>
+                  <input
+                    className={input}
+                    value={customLabel}
+                    onChange={(e) => setCustomLabel(e.target.value)}
+                    placeholder="Pets, Tuition, Gadgets…"
+                    maxLength={40}
+                    autoFocus
+                    onKeyDown={(e) => e.key === 'Enter' && addCustomCategory()}
+                  />
+                </div>
+                <div>
+                  <label className={label}>Color</label>
+                  <div className="flex flex-wrap gap-2">
+                    {CUSTOM_CATEGORY_COLORS.map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        onClick={() => setCustomColor(color)}
+                        className={`h-8 w-8 rounded-full border-2 transition ${
+                          customColor === color ? 'border-purple-text scale-110' : 'border-transparent'
+                        }`}
+                        style={{ backgroundColor: color }}
+                        aria-label={`Pick color ${color}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-purple-primary/10 px-5 py-4">
+              <button
+                type="button"
+                onClick={closeCustomModal}
+                className="glass-btn-ghost rounded-lg px-3 py-2 text-xs font-medium text-purple-soft hover:text-purple-text"
+              >
+                Done
+              </button>
+              <button
+                type="button"
+                disabled={customSaving}
+                onClick={addCustomCategory}
+                className={`${btnPrimary} px-4 py-2 text-xs`}
+              >
+                {customSaving ? 'Adding…' : 'Add category'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }

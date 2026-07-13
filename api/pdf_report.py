@@ -251,7 +251,7 @@ def stat_cards_row(*cards):
     return table
 
 
-def build_monthly_pdf(year, month, weeks, cat_totals, insights):
+def build_monthly_pdf(year, month, weeks, cat_totals, insights, labels=None):
     badge = f"[ {datetime(year, month, 1).strftime('%B %Y').upper()} ]"
     return build_period_pdf(
         "MONTHLY FINANCIAL TRACKER",
@@ -264,10 +264,11 @@ def build_monthly_pdf(year, month, weeks, cat_totals, insights):
         unit_label="Weeks Tracked",
         unit_value=f"{len(weeks)} wk(s)",
         balance_note="Total saved this month",
+        labels=labels,
     )
 
 
-def build_yearly_pdf(year, month_rows, cat_totals, insights):
+def build_yearly_pdf(year, month_rows, cat_totals, insights, labels=None):
     rows = [
         {
             "week_start_date": row["week_start_date"],
@@ -289,10 +290,11 @@ def build_yearly_pdf(year, month_rows, cat_totals, insights):
         unit_label="Months Tracked",
         unit_value=f"{len(month_rows)} mo(s)",
         balance_note="Total saved this year",
+        labels=labels,
     )
 
 
-def build_range_pdf(label, weeks, cat_totals, insights):
+def build_range_pdf(label, weeks, cat_totals, insights, labels=None):
     return build_period_pdf(
         "CUSTOM RANGE REPORT",
         f"[ {label.upper()} ]",
@@ -305,6 +307,7 @@ def build_range_pdf(label, weeks, cat_totals, insights):
         unit_label="Weeks Tracked",
         unit_value=f"{len(weeks)} wk(s)",
         balance_note="Net for selected range",
+        labels=labels,
     )
 
 
@@ -321,11 +324,13 @@ def build_period_pdf(
     unit_label="Periods",
     unit_value="0",
     balance_note="Balance",
+    labels=None,
 ):
     if income_desc_fn is None:
         income_desc_fn = lambda index, _row: f"Period {index + 1}"
     if expense_desc_fn is None:
         expense_desc_fn = lambda label: f"{label} total"
+    label_map = {**CATEGORY_LABELS, **(labels or {})}
 
     total_allowance = sum(float(row["allowance"]) for row in rows)
     total_spent = sum(float(row.get("total_spent", row.get("spent", 0))) for row in rows)
@@ -350,10 +355,16 @@ def build_period_pdf(
         for index, row in enumerate(rows)
     ] or [["—", "—", "No data", "0.00"]]
 
+    category_order = list(dict.fromkeys([*CATEGORIES, *cat_totals.keys()]))
     expense_rows = [
-        ["—", CATEGORY_LABELS[category], expense_desc_fn(CATEGORY_LABELS[category]), f"{cat_totals[category]:,.2f}"]
-        for category in CATEGORIES
-        if cat_totals[category] > 0
+        [
+            "—",
+            label_map.get(category, category),
+            expense_desc_fn(label_map.get(category, category)),
+            f"{float(cat_totals[category]):,.2f}",
+        ]
+        for category in category_order
+        if float(cat_totals.get(category, 0) or 0) > 0
     ] or [["—", "—", "No expenses", "0.00"]]
 
     left = [
@@ -394,11 +405,14 @@ def build_period_pdf(
     ]
 
     chart_width = int(left_width + gutter_width * 0.5)
-    chart_categories = [category for category in CATEGORIES if cat_totals[category] > 0]
+    chart_categories = [
+        category for category in category_order
+        if float(cat_totals.get(category, 0) or 0) > 0
+    ]
     chart = bar_chart(
-        [CATEGORY_LABELS[category] for category in chart_categories],
-        [cat_totals[category] for category in chart_categories],
-        [CATEGORY_PDF_COLORS[category] for category in chart_categories],
+        [label_map.get(category, category) for category in chart_categories],
+        [float(cat_totals[category]) for category in chart_categories],
+        [CATEGORY_PDF_COLORS.get(category, TEXT_MUTED) for category in chart_categories],
         width=chart_width,
         height=108,
     )

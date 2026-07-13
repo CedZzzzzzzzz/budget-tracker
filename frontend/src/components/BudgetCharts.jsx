@@ -1,5 +1,6 @@
 import { useMemo, useState, useId } from 'react';
-import { CATEGORIES, CATEGORY_LABELS, categoryColor } from '../utils/categorize';
+import { categoryColor, categoryLabel } from '../utils/categorize';
+import { useCategories } from './CategoriesContext';
 import CategoryIcon from './CategoryIcon';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -26,14 +27,15 @@ function describeArc(cx, cy, r, startAngle, endAngle) {
 
 export function CategoryDonutChart({ totals }) {
   const [active, setActive] = useState(null);
+  const { categories, labels, colors } = useCategories();
 
   const segments = useMemo(() => {
-    const items = CATEGORIES
+    const items = categories
       .map((category) => ({
         category,
-        label: CATEGORY_LABELS[category],
+        label: categoryLabel(category, labels),
         value: Number(totals[category]) || 0,
-        color: categoryColor(category),
+        color: categoryColor(category, colors),
       }))
       .filter((item) => item.value > 0);
     const total = items.reduce((sum, item) => sum + item.value, 0);
@@ -44,7 +46,7 @@ export function CategoryDonutChart({ totals }) {
       angle += sweep;
       return segment;
     });
-  }, [totals]);
+  }, [totals, categories, labels, colors]);
 
   const spent = Number(totals.spent) || 0;
   const hovered = segments.find((s) => s.category === active);

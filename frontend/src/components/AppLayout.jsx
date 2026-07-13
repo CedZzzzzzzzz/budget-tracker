@@ -1,7 +1,8 @@
 import { useState, useEffect, createContext, useContext, useMemo } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { apiFetch } from '../api';
+import { checkAuth, logoutSession } from '../api';
 import { NAV_ITEMS, matchNavItem } from '../utils/nav';
+import { CategoriesProvider } from './CategoriesContext';
 import OnboardingTour from './OnboardingTour';
 
 const ICON = 'h-[22px] w-[22px]';
@@ -151,8 +152,7 @@ export default function AppLayout() {
 
   useEffect(() => {
     let cancelled = false;
-    apiFetch('/api/check-auth')
-      .then((r) => r.json())
+    checkAuth()
       .then((d) => {
         if (cancelled) return;
         if (!d.authenticated) {
@@ -176,7 +176,7 @@ export default function AppLayout() {
   };
 
   const logout = async () => {
-    await apiFetch('/api/logout', { method: 'POST' });
+    await logoutSession();
     navigate('/');
   };
 
@@ -199,89 +199,91 @@ export default function AppLayout() {
   }
 
   return (
-    <LayoutContext.Provider value={outletContext}>
-      <div className="app-shell">
-        <div
-          className={`app-sidebar-backdrop ${sidebarOpen ? 'app-sidebar-backdrop--open' : ''}`}
-          onClick={() => setSidebarOpen(false)}
-          aria-hidden="true"
-        />
-
-        <aside className={`app-sidebar ${sidebarOpen ? 'app-sidebar--open' : ''}`}>
-          <div className="app-sidebar-brand">
-            <div className="app-sidebar-logo">
-              <span>₱</span>
-            </div>
-            <span className="app-sidebar-title">Budget</span>
-          </div>
-
-          <SidebarNav
-            onNavigate={() => setSidebarOpen(false)}
-            tourActive={tourActive}
+    <CategoriesProvider>
+      <LayoutContext.Provider value={outletContext}>
+        <div className="app-shell">
+          <div
+            className={`app-sidebar-backdrop ${sidebarOpen ? 'app-sidebar-backdrop--open' : ''}`}
+            onClick={() => setSidebarOpen(false)}
+            aria-hidden="true"
           />
 
-          <div className="app-sidebar-footer">
-            {username && (
-              <p className="app-sidebar-user" title={username}>
-                {username}
-              </p>
-            )}
-            <button
-              type="button"
-              className="app-sidebar-action"
-              onClick={toggleTheme}
-              aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
-              title={darkMode ? 'Light mode' : 'Dark mode'}
-            >
-              {darkMode ? <SunIcon /> : <MoonIcon />}
-            </button>
-            <button
-              type="button"
-              className="app-sidebar-action app-sidebar-action--danger"
-              onClick={logout}
-              aria-label="Logout"
-              title="Logout"
-            >
-              <LogoutIcon />
-            </button>
-          </div>
-        </aside>
+          <aside className={`app-sidebar ${sidebarOpen ? 'app-sidebar--open' : ''}`}>
+            <div className="app-sidebar-brand">
+              <div className="app-sidebar-logo">
+                <span>₱</span>
+              </div>
+              <span className="app-sidebar-title">Budget</span>
+            </div>
 
-        <div className="app-main">
-          <header className="app-header">
-            <div className="flex min-w-0 flex-1 items-start gap-3">
+            <SidebarNav
+              onNavigate={() => setSidebarOpen(false)}
+              tourActive={tourActive}
+            />
+
+            <div className="app-sidebar-footer">
+              {username && (
+                <p className="app-sidebar-user" title={username}>
+                  {username}
+                </p>
+              )}
               <button
                 type="button"
-                className="app-mobile-menu-btn flex lg:hidden"
-                onClick={() => setSidebarOpen(true)}
-                aria-label="Open menu"
+                className="app-sidebar-action"
+                onClick={toggleTheme}
+                aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+                title={darkMode ? 'Light mode' : 'Dark mode'}
               >
-                <MenuIcon />
+                {darkMode ? <SunIcon /> : <MoonIcon />}
               </button>
-              <div className="min-w-0">
-                <h1 className="app-page-title">{activeNav?.title}</h1>
-                {activeNav?.subtitle && (
-                  <p className="app-page-subtitle">{activeNav.subtitle}</p>
-                )}
-              </div>
+              <button
+                type="button"
+                className="app-sidebar-action app-sidebar-action--danger"
+                onClick={logout}
+                aria-label="Logout"
+                title="Logout"
+              >
+                <LogoutIcon />
+              </button>
             </div>
-            {headerActions && (
-              <div className="app-header-actions">{headerActions}</div>
-            )}
-          </header>
+          </aside>
 
-          <main className={`app-content ${tourActive ? 'pb-44' : ''}`}>
-            <Outlet context={outletContext} />
-          </main>
+          <div className="app-main">
+            <header className="app-header">
+              <div className="flex min-w-0 flex-1 items-start gap-3">
+                <button
+                  type="button"
+                  className="app-mobile-menu-btn flex lg:hidden"
+                  onClick={() => setSidebarOpen(true)}
+                  aria-label="Open menu"
+                >
+                  <MenuIcon />
+                </button>
+                <div className="min-w-0">
+                  <h1 className="app-page-title">{activeNav?.title}</h1>
+                  {activeNav?.subtitle && (
+                    <p className="app-page-subtitle">{activeNav.subtitle}</p>
+                  )}
+                </div>
+              </div>
+              {headerActions && (
+                <div className="app-header-actions">{headerActions}</div>
+              )}
+            </header>
+
+            <main className={`app-content ${tourActive ? 'pb-44' : ''}`}>
+              <Outlet context={outletContext} />
+            </main>
+          </div>
+
+          {tourActive && (
+            <OnboardingTour
+              username={username}
+              onComplete={() => setOnboardingCompleted(true)}
+            />
+          )}
         </div>
-
-        {tourActive && (
-          <OnboardingTour
-            username={username}
-            onComplete={() => setOnboardingCompleted(true)}
-          />
-        )}
-      </div>
-    </LayoutContext.Provider>
+      </LayoutContext.Provider>
+    </CategoriesProvider>
   );
 }

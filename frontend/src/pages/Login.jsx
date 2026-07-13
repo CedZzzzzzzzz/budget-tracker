@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { apiFetch, primeCsrf } from '../api';
+import { apiFetch, primeCsrf, markLoginSession, checkAuth } from '../api';
 
 function Field({ label, type = 'text', value, onChange, onKeyDown, autoComplete, placeholder }) {
   return (
@@ -145,7 +145,8 @@ function SubmitButton({ loading, onClick, children }) {
 function LoginForm({ onSubmit, loading, error }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const submit = () => onSubmit({ username, password });
+  const [rememberMe, setRememberMe] = useState(false);
+  const submit = () => onSubmit({ username, password, rememberMe });
 
   return (
     <div className="login-panel-content">
@@ -158,9 +159,18 @@ function LoginForm({ onSubmit, loading, error }) {
         <Field label="Username" value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} autoComplete="username" placeholder="your username" />
         <Field label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} autoComplete="current-password" placeholder="••••••••" />
       </div>
-      <p className="mt-3 text-right text-xs">
-        <Link to="/forgot-password" className="text-brand-glow hover:underline">Forgot password?</Link>
-      </p>
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <label className="flex cursor-pointer items-center gap-2 text-xs text-brand-muted select-none">
+          <input
+            type="checkbox"
+            checked={rememberMe}
+            onChange={(e) => setRememberMe(e.target.checked)}
+            className="h-3.5 w-3.5 rounded border-brand-glow/30 bg-brand-accent/40 text-brand-glow focus:ring-brand-glow/40"
+          />
+          Remember me
+        </label>
+        <Link to="/forgot-password" className="text-xs text-brand-glow hover:underline">Forgot password?</Link>
+      </div>
       <SubmitButton loading={loading} onClick={submit}>{loading ? 'Signing in…' : 'Sign in'}</SubmitButton>
     </div>
   );
@@ -193,6 +203,7 @@ export default function Login() {
   const [mode, setMode] = useState('login');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
   const navigate = useNavigate();
   const isLogin = mode === 'login';
 
@@ -203,24 +214,36 @@ export default function Login() {
   }, []);
 
   useEffect(() => {
-    apiFetch('/api/check-auth')
-      .then((r) => r.json())
+    let cancelled = false;
+    checkAuth()
       .then((d) => {
-        if (!d.authenticated) return;
-        navigate('/dashboard');
+        if (cancelled) return;
+        if (d.authenticated) {
+          navigate('/dashboard', { replace: true });
+          return;
+        }
+        setAuthChecking(false);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setAuthChecking(false);
+      });
+    return () => { cancelled = true; };
   }, [navigate]);
 
-  const handleLogin = async ({ username, password }) => {
+  const handleLogin = async ({ username, password, rememberMe }) => {
     setError('');
     if (!username || !password) return setError('Please enter username and password');
     setLoading(true);
     try {
-      const res = await apiFetch('/api/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+      const res = await apiFetch('/api/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password, remember_me: Boolean(rememberMe) }),
+      });
       const data = await res.json();
-      if (res.ok) navigate('/dashboard');
-      else setError(data.error || 'Login failed');
+      if (res.ok) {
+        markLoginSession(Boolean(rememberMe));
+        navigate('/dashboard', { replace: true });
+      } else setError(data.error || 'Login failed');
     } catch {
       setError('Connection error');
     } finally {
@@ -235,8 +258,10 @@ export default function Login() {
     try {
       const res = await apiFetch('/api/register', { method: 'POST', body: JSON.stringify({ username, email, password }) });
       const data = await res.json();
-      if (res.ok) navigate('/dashboard');
-      else setError(data.error || 'Registration failed');
+      if (res.ok) {
+        markLoginSession(false);
+        navigate('/dashboard', { replace: true });
+      } else setError(data.error || 'Registration failed');
     } catch {
       setError('Connection error');
     } finally {
@@ -248,6 +273,14 @@ export default function Login() {
     setError('');
     setMode((m) => (m === 'login' ? 'register' : 'login'));
   };
+
+  if (authChecking) {
+    return (
+      <div className="login-page flex min-h-[calc(100vh-32px)] items-center justify-center px-3 py-4">
+        <p className="text-sm text-brand-muted">Loading…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="login-page flex min-h-[calc(100vh-32px)] items-center justify-center px-3 py-4">

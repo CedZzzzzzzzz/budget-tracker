@@ -85,12 +85,17 @@ prompt = (
 )
 
 
-def generate_budget_insights(allowance, totals, period="week"):
+def generate_budget_insights(allowance, totals, period="week", labels=None):
     try:
+        label_map = labels or CATEGORY_LABELS
+        skip = {"spent", "remaining", "allowance"}
+        category_keys = [
+            key for key, value in totals.items()
+            if key not in skip and float(value or 0) > 0
+        ]
         category_lines = "\n".join(
-            f"            - {CATEGORY_LABELS[c]} : &#8369;{totals.get(c, 0):.2f}"
-            for c in CATEGORIES
-            if totals.get(c, 0) > 0
+            f"            - {label_map.get(c, c)} : &#8369;{totals.get(c, 0):.2f}"
+            for c in category_keys
         ) or "            - No category spending yet"
         notes = prompt.format(
             username=session.get("username"),
@@ -144,27 +149,39 @@ def get_user_id():
     return session.get("user_id")
 
 
-def build_expenses_payload(rows, items_by_expense):
+def resolve_category(user_id, category, name=""):
+    allowed = db.allowed_category_slugs(user_id)
+    category = (category or "").strip().lower()
+    if category in allowed:
+        return category
+    user_rules = db.get_user_category_rules(user_id)
+    return categorize_item(name, user_rules, allowed_categories=allowed)
+
+
+def build_expenses_payload(rows, items_by_expense, categories=None):
+    cats = categories if categories is not None else CATEGORIES
     expenses = {}
-    cat_totals = {c: 0 for c in CATEGORIES}
+    cat_totals = {c: 0 for c in cats}
     for r in rows:
         items = items_by_expense.get(r["id"], [])
-        breakdown = db.breakdown_from_row(r, items)
+        breakdown = db.breakdown_from_row(r, items, cats)
         expenses[r["day"]] = {
             **breakdown,
             "total": db.as_float(r["total"]),
             "items": items,
         }
-        for c in CATEGORIES:
-            cat_totals[c] += breakdown[c]
+        for c in breakdown:
+            cat_totals[c] = cat_totals.get(c, 0) + breakdown[c]
     return expenses, cat_totals
 
 
-def serialize_expenses(expenses):
+def serialize_expenses(expenses, categories=None):
+    cats = categories if categories is not None else CATEGORIES
     result = {}
     for day, exp in expenses.items():
+        day_cats = list(dict.fromkeys([*cats, *[k for k in exp.keys() if k not in ("total", "items")]]))
         result[day] = {
-            **{c: db.as_float(exp[c]) for c in CATEGORIES},
+            **{c: db.as_float(exp.get(c, 0)) for c in day_cats},
             "total": db.as_float(exp["total"]),
             "items": [{
                 "id": item["id"],
@@ -179,34 +196,47 @@ def serialize_expenses(expenses):
 
 
 def json_budget_payload(budget, rows, items_by_expense, user_id=None):
-    expenses, cat_totals = build_expenses_payload(rows, items_by_expense)
+    categories = db.allowed_category_slugs(user_id) if user_id is not None else list(CATEGORIES)
+    expenses, cat_totals = build_expenses_payload(rows, items_by_expense, categories)
     allowance = db.as_float(budget["allowance"])
     spent = sum(cat_totals.values())
     totals = {
-        **{c: cat_totals[c] for c in CATEGORIES},
+        **{c: cat_totals.get(c, 0) for c in categories},
         "spent": spent,
         "remaining": allowance - spent,
     }
+    for key, value in cat_totals.items():
+        if key not in totals:
+            totals[key] = value
     payload = {
         "allowance": allowance,
-        "expenses": serialize_expenses(expenses),
+        "expenses": serialize_expenses(expenses, categories),
         "totals": totals,
         "days_logged": len(expenses),
     }
     if user_id is not None:
         limits = db.get_category_limits(user_id)
         payload["category_limits"] = limits
-        payload["category_status"] = db.build_category_status(totals, limits)
+        payload["category_status"] = db.build_category_status(totals, limits, categories)
+        payload["custom_categories"] = db.get_user_categories(user_id)
     return payload
 
 
-def empty_budget_payload():
-    return {
+def empty_budget_payload(user_id=None):
+    categories = db.allowed_category_slugs(user_id) if user_id is not None else list(CATEGORIES)
+    payload = {
         "allowance": 0,
         "expenses": {},
-        "totals": {**{c: 0 for c in CATEGORIES}, "spent": 0, "remaining": 0},
+        "totals": {**{c: 0 for c in categories}, "spent": 0, "remaining": 0},
         "days_logged": 0,
     }
+    if user_id is not None:
+        payload["custom_categories"] = db.get_user_categories(user_id)
+        payload["category_limits"] = db.get_category_limits(user_id)
+        payload["category_status"] = db.build_category_status(
+            payload["totals"], payload["category_limits"], categories,
+        )
+    return payload
 
 
 def week_info_payload():
@@ -231,10 +261,12 @@ def mutation_payload(day, day_expense, budget_totals, user_id=None):
         "totals": budget_totals,
     }
     if user_id is not None:
+        categories = db.allowed_category_slugs(user_id)
         limits = db.get_category_limits(user_id)
         payload["category_limits"] = limits
-        payload["category_status"] = db.build_category_status(budget_totals, limits)
+        payload["category_status"] = db.build_category_status(budget_totals, limits, categories)
         payload["category_rules"] = db.get_user_category_rules(user_id)
+        payload["custom_categories"] = db.get_user_categories(user_id)
     return payload
 
 
@@ -358,7 +390,9 @@ def register():
                 email,
             )
             return jsonify({"error": "Registration failed"}), 500
-        session["user_id"]  = user_id
+        session.clear()
+        session.permanent = False
+        session["user_id"] = user_id
         session["username"] = username
         return jsonify({
             "success": True,
@@ -372,9 +406,10 @@ def register():
 @limiter.limit("10 per minute")
 @handle_api_errors
 def login():
-    data     = request.get_json()
+    data     = request.get_json() or {}
     username = data.get("username", "").strip()
     password = data.get("password", "")
+    remember = bool(data.get("remember_me") or data.get("remember"))
 
     if not username or not password:
         return jsonify({"error": "Username and password are required"}), 400
@@ -386,11 +421,14 @@ def login():
     if not db.verify_password(user, password):
         return jsonify({"error": "Incorrect password"}), 401
 
-    session["user_id"]  = user["id"]
+    session.clear()
+    session.permanent = remember
+    session["user_id"] = user["id"]
     session["username"] = user["username"]
     return jsonify({
         "success": True,
         "username": user["username"],
+        "remember_me": remember,
         "onboarding_completed": bool(user.get("onboarding_completed_at")),
     })
 
@@ -409,6 +447,7 @@ def check_auth():
     return jsonify({
         "authenticated": True,
         "username": session.get("username"),
+        "remember_me": bool(session.permanent),
         "onboarding_completed": db.is_onboarding_completed(user_id),
     })
 
@@ -549,7 +588,7 @@ def dashboard():
         )
         budget_data = (
             json_budget_payload(budget, rows, items_by_expense, user_id=user_id)
-            if budget else empty_budget_payload()
+            if budget else empty_budget_payload(user_id)
         )
         return jsonify({
             "username": session.get("username"),
@@ -557,6 +596,7 @@ def dashboard():
             "budget": budget_data,
             "comparison": comparison,
             "category_rules": db.get_user_category_rules(user_id),
+            "custom_categories": db.get_user_categories(user_id),
         })
 
 
@@ -599,11 +639,14 @@ def categorize_item_route():
             return jsonify({"error": "Item name is required"}), 400
         if len(name) > MAX_ITEM_NAME_LEN:
             return jsonify({"error": f"Item name must be at most {MAX_ITEM_NAME_LEN} characters."}), 400
-        user_rules = db.get_user_category_rules(get_user_id())
-        category = categorize_item(name, user_rules)
+        user_id = get_user_id()
+        user_rules = db.get_user_category_rules(user_id)
+        allowed = db.allowed_category_slugs(user_id)
+        category = categorize_item(name, user_rules, allowed_categories=allowed)
+        labels = db.category_labels_for_user(user_id)
         return jsonify({
             "category": category,
-            "label": CATEGORY_LABELS[category],
+            "label": labels.get(category, category),
         })
 
 
@@ -632,9 +675,7 @@ def add_expense_item_route():
     if amount <= 0:
         return jsonify({"error": "Amount must be greater than 0"}), 400
 
-    if category not in CATEGORIES:
-        user_rules = db.get_user_category_rules(user_id)
-        category = categorize_item(name, user_rules)
+    category = resolve_category(user_id, category, name)
 
     expense_date = week_start + timedelta(days=DAYS_MAP.get(day, 0))
     budget = db.get_budget_by_week(user_id, week_start, week_end)
@@ -670,9 +711,7 @@ def edit_expense_item_route(item_id):
         return jsonify({"error": f"Item name must be at most {MAX_ITEM_NAME_LEN} characters."}), 400
     if amount <= 0:
         return jsonify({"error": "Amount must be greater than 0"}), 400
-    if category not in CATEGORIES:
-        user_rules = db.get_user_category_rules(user_id)
-        category = categorize_item(name, user_rules)
+    category = resolve_category(user_id, category, name)
 
     item, day, day_expense, budget_totals = db.update_expense_item(
         item_id, user_id, name, amount, category, notes=notes, tags=tags,
@@ -730,9 +769,9 @@ def get_budget():
     budget, rows, items_by_expense = db.fetch_week_budget(user_id, week_start, week_end)
 
     if not budget:
-        return jsonify(empty_budget_payload())
+        return jsonify(empty_budget_payload(user_id))
 
-    return jsonify(json_budget_payload(budget, rows, items_by_expense))
+    return jsonify(json_budget_payload(budget, rows, items_by_expense, user_id=user_id))
 
 
 @api.route("/budget-settings", methods=["GET"])
@@ -744,6 +783,7 @@ def get_budget_settings():
         "category_limits": db.get_category_limits(user_id),
         "recurring_expenses": db.get_recurring_expenses(user_id),
         "category_rules": db.get_user_category_rules(user_id),
+        "custom_categories": db.get_user_categories(user_id),
     })
 
 
@@ -756,9 +796,11 @@ def update_category_limits():
     if not isinstance(limits_in, dict):
         return jsonify({"error": "limits must be an object."}), 400
 
+    user_id = get_user_id()
+    allowed = set(db.allowed_category_slugs(user_id))
     parsed = {}
     for category, value in limits_in.items():
-        if category not in CATEGORIES:
+        if category not in allowed:
             continue
         if value is None or value == "":
             parsed[category] = None
@@ -769,19 +811,95 @@ def update_category_limits():
             else:
                 parsed[category] = amount
 
-    user_id = get_user_id()
     db.set_category_limits(user_id, parsed)
     limits = db.get_category_limits(user_id)
+    categories = db.allowed_category_slugs(user_id)
     week_start, week_end = get_week_range()
     budget = db.get_budget_by_week(user_id, week_start, week_end)
-    totals = {**{c: 0 for c in CATEGORIES}, "spent": 0, "remaining": 0}
+    totals = {**{c: 0 for c in categories}, "spent": 0, "remaining": 0}
     if budget:
         with db.db_cursor(dict_cursor=True) as cursor:
             totals = db.compute_budget_totals(cursor, budget["id"])
     return jsonify({
         "success": True,
         "category_limits": limits,
-        "category_status": db.build_category_status(totals, limits),
+        "category_status": db.build_category_status(totals, limits, categories),
+    })
+
+
+@api.route("/user-categories", methods=["GET"])
+@login_required
+@handle_api_errors
+def list_user_categories():
+    user_id = get_user_id()
+    return jsonify({
+        "custom_categories": db.get_user_categories(user_id),
+        "categories": db.allowed_category_slugs(user_id),
+        "labels": db.category_labels_for_user(user_id),
+    })
+
+
+@api.route("/user-categories", methods=["POST"])
+@login_required
+@handle_api_errors
+def create_user_category_route():
+    data = request.get_json() or {}
+    user_id = get_user_id()
+    try:
+        category = db.create_user_category(
+            user_id,
+            label=data.get("label") or data.get("name"),
+            color=data.get("color"),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({
+        "success": True,
+        "category": category,
+        "custom_categories": db.get_user_categories(user_id),
+        "categories": db.allowed_category_slugs(user_id),
+        "labels": db.category_labels_for_user(user_id),
+    }), 201
+
+
+@api.route("/user-categories/<int:category_id>", methods=["PUT"])
+@login_required
+@handle_api_errors
+def update_user_category_route(category_id):
+    data = request.get_json() or {}
+    user_id = get_user_id()
+    fields = {}
+    if "label" in data or "name" in data:
+        fields["label"] = data.get("label") if "label" in data else data.get("name")
+    if "color" in data:
+        fields["color"] = data.get("color")
+    try:
+        category = db.update_user_category(category_id, user_id, **fields)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not category:
+        return jsonify({"error": "Category not found."}), 404
+    return jsonify({
+        "success": True,
+        "category": category,
+        "custom_categories": db.get_user_categories(user_id),
+        "categories": db.allowed_category_slugs(user_id),
+        "labels": db.category_labels_for_user(user_id),
+    })
+
+
+@api.route("/user-categories/<int:category_id>", methods=["DELETE"])
+@login_required
+@handle_api_errors
+def delete_user_category_route(category_id):
+    user_id = get_user_id()
+    if not db.delete_user_category(category_id, user_id):
+        return jsonify({"error": "Category not found."}), 404
+    return jsonify({
+        "success": True,
+        "custom_categories": db.get_user_categories(user_id),
+        "categories": db.allowed_category_slugs(user_id),
+        "labels": db.category_labels_for_user(user_id),
     })
 
 
@@ -811,8 +929,7 @@ def create_recurring_expense_route():
         return jsonify({"error": "Amount must be greater than 0."}), 400
     if frequency not in ("weekly", "monthly"):
         return jsonify({"error": "Frequency must be weekly or monthly."}), 400
-    if category not in CATEGORIES:
-        category = categorize_item(name, db.get_user_category_rules(user_id))
+    category = resolve_category(user_id, category, name)
 
     apply_day = None
     apply_day_of_month = None
@@ -860,7 +977,8 @@ def update_recurring_expense_route(recurring_id):
         fields["amount"] = amount
     if "category" in data:
         category = (data.get("category") or "").strip().lower()
-        if category not in CATEGORIES:
+        allowed = db.allowed_category_slugs(user_id)
+        if category not in allowed:
             return jsonify({"error": "Invalid category."}), 400
         fields["category"] = category
     if "frequency" in data:
@@ -1126,7 +1244,11 @@ def monthly_summary():
         "total_saved": snapshot["total_allowance"] - snapshot["total_spent"],
         "total_undersaved": snapshot["total_saved"],
         "total_overspent": snapshot["total_overspent"],
-        "breakdown": {c: breakdown.get(c, 0) for c in CATEGORIES},
+        "breakdown": {
+            c: breakdown.get(c, 0)
+            for c in db.allowed_category_slugs(user_id)
+        },
+        "custom_categories": db.get_user_categories(user_id),
         "weeks": weekly_data,
         "num_weeks": len(weekly_data),
     })
@@ -1173,6 +1295,7 @@ def export_csv():
         filename = f"budget-week-{week_start}.csv"
 
     rows = db.fetch_export_rows(user_id, start_date, end_date)
+    labels = db.category_labels_for_user(user_id)
     output = StringIO()
     writer = csv.writer(output)
     writer.writerow(["Date", "Day", "Item", "Category", "Amount", "Notes", "Tags"])
@@ -1181,7 +1304,7 @@ def export_csv():
             row["expense_date"],
             row["day"],
             row["name"],
-            CATEGORY_LABELS.get(row["category"], row["category"]),
+            labels.get(row["category"], row["category"]),
             f'{row["amount"]:.2f}',
             row.get("notes") or "",
             ", ".join(row.get("tags") or []),
@@ -1213,7 +1336,7 @@ def week_detail():
     if not budget:
         return jsonify({"error": "Week not found"}), 404
 
-    payload = json_budget_payload(budget, rows, items_by_expense)
+    payload = json_budget_payload(budget, rows, items_by_expense, user_id=user_id)
     return jsonify({
         "week_start": str(week_start),
         "week_end": str(week_end),
@@ -1247,7 +1370,12 @@ def export_monthly_pdf():
     )
 
     weeks, breakdown = db.get_monthly_summary(user_id, start_date, end_date)
-    cat_totals = {category: db.as_float(breakdown.get(category, 0)) for category in CATEGORIES}
+    categories = db.allowed_category_slugs(user_id)
+    labels = db.category_labels_for_user(user_id)
+    cat_totals = {category: db.as_float(breakdown.get(category, 0)) for category in categories}
+    for key, value in breakdown.items():
+        if key not in cat_totals:
+            cat_totals[key] = db.as_float(value)
     total_allowance = sum(db.as_float(week["allowance"]) for week in weeks)
     total_spent = sum(db.as_float(week["total_spent"]) for week in weeks)
     insights = generate_budget_insights(
@@ -1255,7 +1383,7 @@ def export_monthly_pdf():
         {**cat_totals, "spent": total_spent, "remaining": total_allowance - total_spent},
         period="month",
     )
-    buffer = build_monthly_pdf(year, month, weeks, cat_totals, insights)
+    buffer = build_monthly_pdf(year, month, weeks, cat_totals, insights, labels=labels)
     return pdf_response(buffer, f"{year}_{month}.pdf")
 
 
@@ -1317,7 +1445,8 @@ def export_yearly_pdf():
         },
         period="year",
     )
-    buffer = build_yearly_pdf(year, summary["month_rows"], cat_totals, insights)
+    labels = db.category_labels_for_user(user_id)
+    buffer = build_yearly_pdf(year, summary["month_rows"], cat_totals, insights, labels=labels)
     return pdf_response(buffer, f"budget-{year}.pdf")
 
 
@@ -1350,7 +1479,10 @@ def export_range_pdf():
         },
         period="range",
     )
-    buffer = build_range_pdf(label, report["raw_weeks"], report["breakdown"], insights)
+    labels = db.category_labels_for_user(user_id)
+    buffer = build_range_pdf(
+        label, report["raw_weeks"], report["breakdown"], insights, labels=labels,
+    )
     return pdf_response(buffer, f"budget-{start_date}_to_{end_inclusive}.pdf")
 
 

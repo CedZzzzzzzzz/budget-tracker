@@ -6,11 +6,11 @@ import { applyMutationPatch, applyDashboardData, patchComparisonFromTotals, patc
 import { CategoryDonutChart, WeekComparisonChart, SpendingByDayChart } from '../components/BudgetCharts';
 import UndoToast from '../components/UndoToast';
 import CategoryBadge from '../components/CategoryBadge';
+import { useCategories } from '../components/CategoriesContext';
+import ShortcutsHelp, { isEditableTarget } from '../components/ShortcutsHelp';
 import {
   categorizeItem,
-  CATEGORIES,
-  CATEGORY_LABELS,
-  CATEGORY_COLORS,
+  categoryLabel,
 } from '../utils/categorize';
 import {
   card, cardInner, input, label, btnPrimary,
@@ -332,10 +332,11 @@ function WeekComparisonCard({ data }) {
 }
 
 function CategoryLimitAlerts({ categoryStatus }) {
+  const { categories, labels } = useCategories();
   if (!categoryStatus) return null;
 
-  const over = CATEGORIES.filter((c) => categoryStatus[c]?.over);
-  const warning = CATEGORIES.filter((c) => categoryStatus[c]?.warning && !categoryStatus[c]?.over);
+  const over = categories.filter((c) => categoryStatus[c]?.over);
+  const warning = categories.filter((c) => categoryStatus[c]?.warning && !categoryStatus[c]?.over);
 
   if (!over.length && !warning.length) return null;
 
@@ -343,13 +344,13 @@ function CategoryLimitAlerts({ categoryStatus }) {
     <div className="space-y-2">
       {over.map((c) => (
         <div key={c} className="rounded-xl border border-red-400/25 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-          <span className="font-medium">{CATEGORY_LABELS[c]}</span>
+          <span className="font-medium">{categoryLabel(c, labels)}</span>
           {' '}is over limit at ₱{categoryStatus[c].spent.toFixed(2)} of ₱{categoryStatus[c].limit.toFixed(2)}
         </div>
       ))}
       {warning.map((c) => (
         <div key={c} className="rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          <span className="font-medium">{CATEGORY_LABELS[c]}</span>
+          <span className="font-medium">{categoryLabel(c, labels)}</span>
           {' '}at {categoryStatus[c].pct}% of limit (₱{categoryStatus[c].spent.toFixed(2)} / ₱{categoryStatus[c].limit.toFixed(2)})
         </div>
       ))}
@@ -372,6 +373,7 @@ function WeeklyTracker({
   weekInfo, allowance, expenses, totals, comparison, categoryStatus, categoryRules,
   onBudgetPatch, onAllowanceChange, onItemDeleted,
 }) {
+  const { categories, labels } = useCategories();
   const today = new Date().getDay();
   const [selDay, setSelDay] = useState(DAYS[today]);
   const [itemName, setItemName] = useState('');
@@ -388,21 +390,103 @@ function WeeklyTracker({
   const [editCategory, setEditCategory] = useState('other');
   const [savingEdit, setSavingEdit] = useState(false);
   const [modalDay, setModalDay] = useState(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const logExpenseRef = useRef(null);
+  const itemNameRef = useRef(null);
+  const itemAmountRef = useRef(null);
 
   useEffect(() => {
-    if (itemName.trim()) setCategory(categorizeItem(itemName, categoryRules));
-  }, [itemName, categoryRules]);
+    if (itemName.trim()) setCategory(categorizeItem(itemName, categoryRules, categories));
+  }, [itemName, categoryRules, categories]);
 
-  const selectDay = (day, i) => {
-    if (i > today) return;
-    setSelDay(day);
-    setEditingId(null);
+  const clearForm = () => {
     setItemName('');
     setItemAmount('');
     setItemNotes('');
     setItemTags('');
     setCategory('other');
+  };
+
+  const focusNewExpense = () => {
+    if (!selDay) setSelDay(DAYS[today]);
+    requestAnimationFrame(() => {
+      logExpenseRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      itemNameRef.current?.focus();
+    });
+  };
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.defaultPrevented) return;
+      const typing = isEditableTarget(e.target);
+      const metaEnter = (e.metaKey || e.ctrlKey) && e.key === 'Enter';
+
+      if (e.key === '?' && !typing) {
+        e.preventDefault();
+        setShortcutsOpen((open) => !open);
+        return;
+      }
+
+      if (shortcutsOpen) return;
+
+      if (e.key === 'Escape') {
+        if (modalDay) {
+          setModalDay(null);
+          return;
+        }
+        if (editingId) {
+          cancelEdit();
+          return;
+        }
+        if (typing) {
+          e.target.blur?.();
+          clearForm();
+        }
+        return;
+      }
+
+      if (metaEnter && !adding && !editingId) {
+        e.preventDefault();
+        addItem();
+        return;
+      }
+
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+
+      const key = e.key.toLowerCase();
+      if (key === 'n') {
+        e.preventDefault();
+        focusNewExpense();
+        return;
+      }
+      if (key === 'a') {
+        e.preventDefault();
+        logExpenseRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        itemAmountRef.current?.focus();
+        return;
+      }
+      if (key >= '1' && key <= '7') {
+        const index = Number(key) - 1;
+        if (index <= today) {
+          e.preventDefault();
+          selectDay(DAYS[index], index);
+          focusNewExpense();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    adding, editingId, modalDay, shortcutsOpen, selDay, today,
+    itemName, itemAmount, itemNotes, itemTags, category,
+  ]);
+
+  const selectDay = (day, i) => {
+    if (i > today) return;
+    setSelDay(day);
+    setEditingId(null);
+    clearForm();
   };
 
   const dayItems = selDay && expenses[selDay]?.items ? expenses[selDay].items : [];
@@ -429,11 +513,7 @@ function WeeklyTracker({
       });
       if (r.ok) {
         const d = await r.json();
-        setItemName('');
-        setItemAmount('');
-        setItemNotes('');
-        setItemTags('');
-        setCategory('other');
+        clearForm();
         onBudgetPatch(d);
       } else {
         const d = await r.json();
@@ -543,8 +623,8 @@ function WeeklyTracker({
               onChange={(e) => setEditCategory(e.target.value)}
               className="glass-input rounded-lg px-2 py-1 text-xs text-purple-text-dim"
             >
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
+              {categories.map((c) => (
+                <option key={c} value={c}>{categoryLabel(c, labels)}</option>
               ))}
             </select>
             <button type="button" className={`${btnPrimary} px-3 py-1.5 text-xs`} onClick={() => saveEdit(item.id)} disabled={savingEdit}>
@@ -660,8 +740,24 @@ function WeeklyTracker({
         </div>
 
         <div ref={logExpenseRef} className={`${card} p-5 scroll-mt-6`}>
-          <SectionTitle className="mb-4">Log expense</SectionTitle>
-          <p className={`mb-2.5 ${statLabel}`}>Select day</p>
+          <SectionTitle
+            className="mb-4"
+            right={(
+              <button
+                type="button"
+                onClick={() => setShortcutsOpen(true)}
+                className="glass-btn-ghost inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-medium text-purple-muted hover:text-purple-text"
+                title="Keyboard shortcuts (?)"
+                aria-label="Keyboard shortcuts"
+              >
+                <kbd className="rounded border border-purple-primary/25 bg-purple-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-purple-primary-light">?</kbd>
+                Shortcuts
+              </button>
+            )}
+          >
+            Log expense
+          </SectionTitle>
+          <p className={`mb-2.5 ${statLabel}`}>Select day <span className="font-normal normal-case tracking-normal text-purple-muted/70">(1–7)</span></p>
           <div className="mb-5 grid grid-cols-7 gap-1.5">
             {DAYS.map((day, i) => {
               const disabled = i > today;
@@ -680,6 +776,7 @@ function WeeklyTracker({
                   }`}
                   onClick={() => selectDay(day, i)}
                   disabled={disabled}
+                  title={`${day} (press ${i + 1})`}
                 >
                   {day.slice(0, 3)}
                 </button>
@@ -691,15 +788,34 @@ function WeeklyTracker({
             <div className={`${cardInner} space-y-4 p-4`}>
               <p className={subtext}>
                 Adding for <span className="font-medium text-purple-primary-light">{selDay}</span>
+                <span className="ml-2 text-purple-muted/70">Press <kbd className="rounded border border-purple-primary/20 px-1 font-mono text-[10px]">N</kbd> to focus</span>
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_110px_auto]">
                 <div>
                   <label className={label}>Item</label>
-                  <input type="text" className={input} placeholder="Jeepney fare, lunch…" value={itemName} onChange={(e) => setItemName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addItem()} />
+                  <input
+                    ref={itemNameRef}
+                    type="text"
+                    className={input}
+                    placeholder="Jeepney fare, lunch…"
+                    value={itemName}
+                    onChange={(e) => setItemName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && addItem()}
+                  />
                 </div>
                 <div>
                   <label className={label}>Amount</label>
-                  <input type="number" className={input} placeholder="0" min="0" step="0.01" value={itemAmount} onChange={(e) => setItemAmount(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addItem()} />
+                  <input
+                    ref={itemAmountRef}
+                    type="number"
+                    className={input}
+                    placeholder="0"
+                    min="0"
+                    step="0.01"
+                    value={itemAmount}
+                    onChange={(e) => setItemAmount(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && addItem()}
+                  />
                 </div>
                 <div className="flex items-end">
                   <button type="button" className={`${btnPrimary} w-full sm:w-auto`} onClick={addItem} disabled={adding}>
@@ -740,8 +856,8 @@ function WeeklyTracker({
                     onChange={(e) => setCategory(e.target.value)}
                     className="glass-input rounded-lg px-2 py-1 text-xs text-purple-text-dim"
                   >
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
+                    {categories.map((c) => (
+                      <option key={c} value={c}>{categoryLabel(c, labels)}</option>
                     ))}
                   </select>
                 </div>
@@ -759,8 +875,8 @@ function WeeklyTracker({
               )}
 
               <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-purple-primary/10 pt-3 text-xs text-purple-muted">
-                {CATEGORIES.filter((c) => (dayTotals[c] || 0) > 0).map((c) => (
-                  <span key={c}>{CATEGORY_LABELS[c]} ₱{(dayTotals[c] || 0).toFixed(2)}</span>
+                {categories.filter((c) => (dayTotals[c] || 0) > 0).map((c) => (
+                  <span key={c}>{categoryLabel(c, labels)} ₱{(dayTotals[c] || 0).toFixed(2)}</span>
                 ))}
                 <span className="ml-auto font-semibold text-purple-text">₱{(dayTotals.total || 0).toFixed(2)}</span>
               </div>
@@ -822,9 +938,9 @@ function WeeklyTracker({
                       </svg>
                     </span>
                   </div>
-                  {CATEGORIES.some((c) => (e[c] || 0) > 0) && (
+                  {categories.some((c) => (e[c] || 0) > 0) && (
                     <div className="mt-2.5 flex flex-wrap gap-1.5">
-                      {CATEGORIES
+                      {categories
                         .filter((c) => (e[c] || 0) > 0)
                         .map((c) => <CategoryBadge key={c} category={c} />)}
                     </div>
@@ -839,7 +955,7 @@ function WeeklyTracker({
             ))}
           </div>
           <div className="grid grid-cols-2 gap-2 border-t border-purple-primary/10 pt-4 sm:grid-cols-3">
-            {CATEGORIES.filter((c) => (totals[c] || 0) > 0 || categoryStatus?.[c]?.limit).map((c) => (
+            {categories.filter((c) => (totals[c] || 0) > 0 || categoryStatus?.[c]?.limit).map((c) => (
               <div key={c} className={`${cardInner} px-3 py-2.5`}>
                 <div className="flex items-center justify-between gap-2">
                   <CategoryBadge category={c} />
@@ -873,6 +989,8 @@ function WeeklyTracker({
           onClose={() => setModalDay(null)}
         />
       )}
+
+      <ShortcutsHelp open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </div>
   );
 }
@@ -888,9 +1006,10 @@ function DayDetailModal({ day, expense, isToday, onDeleteItem, onEditItem, onDel
     };
   }, [onClose]);
 
+  const { categories } = useCategories();
   const items = expense?.items || [];
   const total = expense?.total || 0;
-  const grouped = CATEGORIES
+  const grouped = categories
     .map((c) => ({ category: c, items: items.filter((it) => it.category === c) }))
     .filter((g) => g.items.length > 0);
 
@@ -991,6 +1110,7 @@ function DayDetailModal({ day, expense, isToday, onDeleteItem, onEditItem, onDel
 }
 
 function WeekDetailModal({ weekStart, weekLabel, onClose }) {
+  const { categories, labels } = useCategories();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -1111,8 +1231,8 @@ function WeekDetailModal({ weekStart, weekLabel, onClose }) {
                   <div className={`h-full rounded-full ${barColor} transition-all duration-700`} style={{ width: `${Math.min(pct, 100)}%` }} />
                 </div>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-purple-muted">
-                  {CATEGORIES.filter((c) => (data.totals[c] || 0) > 0).map((c) => (
-                    <span key={c}>{CATEGORY_LABELS[c]} ₱{(data.totals[c] || 0).toFixed(2)}</span>
+                  {categories.filter((c) => (data.totals[c] || 0) > 0).map((c) => (
+                    <span key={c}>{categoryLabel(c, labels)} ₱{(data.totals[c] || 0).toFixed(2)}</span>
                   ))}
                   <span className="ml-auto">{loggedDays}/7 days logged</span>
                 </div>
@@ -1201,6 +1321,7 @@ function WeekDetailModal({ weekStart, weekLabel, onClose }) {
 }
 
 function MonthlyTab({ initMonth, initYear }) {
+  const { categories } = useCategories();
   const [month, setMonth] = useState(initMonth);
   const [year, setYear] = useState(initYear);
   const [data, setData] = useState(null);
@@ -1303,10 +1424,10 @@ function MonthlyTab({ initMonth, initYear }) {
             <div>
               <SectionTitle className="mb-3">Breakdown</SectionTitle>
               <div className="space-y-2">
-                {CATEGORIES.filter((c) => (data.breakdown[c] || 0) > 0).length === 0 ? (
+                {categories.filter((c) => (data.breakdown[c] || 0) > 0).length === 0 ? (
                   <p className={`py-6 text-center ${subtext}`}>No expenses this month</p>
                 ) : (
-                  CATEGORIES.filter((c) => (data.breakdown[c] || 0) > 0).map((c) => (
+                  categories.filter((c) => (data.breakdown[c] || 0) > 0).map((c) => (
                     <div key={c} className={`${cardInner} flex items-center justify-between px-4 py-3`}>
                       <CategoryBadge category={c} />
                       <span className="text-sm font-medium text-purple-text">₱{(data.breakdown[c] || 0).toFixed(2)}</span>
@@ -1366,6 +1487,7 @@ export default function Dashboard({ monthly = false }) {
   const now = new Date();
   const navigate = useNavigate();
   const { setHeaderActions } = useOutletContext() || {};
+  const { categories, setCustomCategories } = useCategories();
   const tab = monthly ? 'monthly' : 'weekly';
   const [screen, setScreen] = useState('setup');
   const [weekInfo, setWeekInfo] = useState(null);
@@ -1421,6 +1543,7 @@ export default function Dashboard({ monthly = false }) {
           setCategoryStatus,
           setCategoryLimits,
           setCategoryRules,
+          setCustomCategories,
         });
       } catch { } finally {
         setLoading(false);
@@ -1429,15 +1552,17 @@ export default function Dashboard({ monthly = false }) {
     })();
     dashboardLoadRef.current = request;
     return request;
-  }, [navigate]);
+  }, [navigate, setCustomCategories]);
 
   const handleBudgetPatch = useCallback((patch) => {
     applyMutationPatch(setExpenses, setTotals, setComparison, patch, {
       setCategoryStatus,
       setCategoryLimits,
       setCategoryRules,
+      setCustomCategories,
+      categories,
     });
-  }, []);
+  }, [categories, setCustomCategories]);
 
   const handleAllowanceChange = useCallback(async (n) => {
     const r = await apiFetch('/api/set-allowance', {
@@ -1449,11 +1574,11 @@ export default function Dashboard({ monthly = false }) {
       throw new Error(d.error || 'Failed to update allowance');
     }
     const d = await r.json();
-    const patch = patchAllowance(d.allowance, d.totals || totals, expenses, comparison);
+    const patch = patchAllowance(d.allowance, d.totals || totals, expenses, comparison, categories);
     setAllowance(patch.allowance);
     setTotals(patch.totals);
     setComparison(patch.comparison);
-  }, [comparison, expenses, totals]);
+  }, [categories, comparison, expenses, totals]);
 
   const handleItemDeleted = useCallback((item) => {
     setUndoItem(item);

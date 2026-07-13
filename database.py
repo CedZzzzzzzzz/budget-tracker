@@ -24,6 +24,9 @@ MAX_ITEM_NAME_LEN = 200
 MAX_ITEM_NOTES_LEN = 500
 MAX_TAG_LEN = 30
 MAX_TAGS_PER_ITEM = 8
+MAX_CUSTOM_CATEGORIES = 20
+MAX_CATEGORY_LABEL_LEN = 40
+MAX_CATEGORY_SLUG_LEN = 32
 
 GMAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
 db_pool = None
@@ -403,34 +406,208 @@ def get_budget_by_week(user_id, week_start, week_end):
         return dict(budget) if budget else None
 
 
-def empty_category_breakdown():
-    from api.categorize import CATEGORIES
-    return {c: 0.0 for c in CATEGORIES}
+def _serialize_user_category(row):
+    return {
+        "id": row["id"],
+        "slug": row["slug"],
+        "label": row["label"],
+        "color": row["color"],
+        "created_at": str(row["created_at"]) if row.get("created_at") else None,
+    }
 
 
-def breakdown_from_items(items):
+def get_user_categories(user_id):
+    with db_cursor(dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT id, slug, label, color, created_at FROM user_categories "
+            "WHERE user_id = %s ORDER BY label ASC, id ASC",
+            (user_id,),
+        )
+        return [_serialize_user_category(dict(row)) for row in cursor.fetchall()]
+
+
+def get_user_category(category_id, user_id):
+    with db_cursor(dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT id, slug, label, color, created_at FROM user_categories "
+            "WHERE id = %s AND user_id = %s",
+            (category_id, user_id),
+        )
+        row = cursor.fetchone()
+        return _serialize_user_category(dict(row)) if row else None
+
+
+def allowed_category_slugs(user_id):
     from api.categorize import CATEGORIES
-    breakdown = empty_category_breakdown()
+    slugs = list(CATEGORIES)
+    if user_id is None:
+        return slugs
+    for category in get_user_categories(user_id):
+        if category["slug"] not in slugs:
+            slugs.append(category["slug"])
+    return slugs
+
+
+def category_labels_for_user(user_id):
+    from api.categorize import CATEGORY_LABELS
+    labels = dict(CATEGORY_LABELS)
+    for category in get_user_categories(user_id):
+        labels[category["slug"]] = category["label"]
+    return labels
+
+
+def slugify_category_label(label):
+    import re
+    slug = re.sub(r"[^a-z0-9]+", "_", (label or "").lower().strip())
+    slug = slug.strip("_")[:MAX_CATEGORY_SLUG_LEN]
+    return slug or "custom"
+
+
+def normalize_category_color(color):
+    import re
+    value = (color or "").strip()
+    if not value:
+        return "#94a3b8"
+    if not re.fullmatch(r"#[0-9A-Fa-f]{6}", value):
+        raise ValueError("Color must be a hex value like #94a3b8.")
+    return value.lower()
+
+
+def create_user_category(user_id, label, color=None, slug=None):
+    from api.categorize import CATEGORIES
+
+    label = (label or "").strip()
+    if not label:
+        raise ValueError("Category name is required.")
+    if len(label) > MAX_CATEGORY_LABEL_LEN:
+        raise ValueError(f"Category name must be at most {MAX_CATEGORY_LABEL_LEN} characters.")
+
+    color = normalize_category_color(color)
+    base_slug = slugify_category_label(slug or label)
+    if base_slug in CATEGORIES:
+        raise ValueError("That name matches a built-in category. Choose a different name.")
+
+    existing = get_user_categories(user_id)
+    if len(existing) >= MAX_CUSTOM_CATEGORIES:
+        raise ValueError(f"You can create at most {MAX_CUSTOM_CATEGORIES} custom categories.")
+
+    used = {c["slug"] for c in existing} | set(CATEGORIES)
+    candidate = base_slug
+    suffix = 2
+    while candidate in used:
+        trimmed = base_slug[: max(1, MAX_CATEGORY_SLUG_LEN - len(str(suffix)) - 1)]
+        candidate = f"{trimmed}_{suffix}"
+        suffix += 1
+
+    with db_cursor(commit=True, dict_cursor=True) as cursor:
+        cursor.execute(
+            "INSERT INTO user_categories (user_id, slug, label, color) "
+            "VALUES (%s, %s, %s, %s) "
+            "RETURNING id, slug, label, color, created_at",
+            (user_id, candidate, label, color),
+        )
+        return _serialize_user_category(dict(cursor.fetchone()))
+
+
+def update_user_category(category_id, user_id, label=None, color=None):
+    existing = get_user_category(category_id, user_id)
+    if not existing:
+        return None
+
+    fields = []
+    params = []
+    if label is not None:
+        label = label.strip()
+        if not label:
+            raise ValueError("Category name is required.")
+        if len(label) > MAX_CATEGORY_LABEL_LEN:
+            raise ValueError(f"Category name must be at most {MAX_CATEGORY_LABEL_LEN} characters.")
+        fields.append("label = %s")
+        params.append(label)
+    if color is not None:
+        fields.append("color = %s")
+        params.append(normalize_category_color(color))
+    if not fields:
+        return existing
+
+    params.extend([category_id, user_id])
+    with db_cursor(commit=True, dict_cursor=True) as cursor:
+        cursor.execute(
+            f"UPDATE user_categories SET {', '.join(fields)} "
+            f"WHERE id = %s AND user_id = %s "
+            f"RETURNING id, slug, label, color, created_at",
+            params,
+        )
+        row = cursor.fetchone()
+        return _serialize_user_category(dict(row)) if row else None
+
+
+def delete_user_category(category_id, user_id):
+    existing = get_user_category(category_id, user_id)
+    if not existing:
+        return False
+    slug = existing["slug"]
+    with db_transaction(dict_cursor=True) as cursor:
+        cursor.execute(
+            "UPDATE expense_items ei SET category = 'other' "
+            "FROM expenses e JOIN budgets b ON e.budget_id = b.id "
+            "WHERE ei.expense_id = e.id AND b.user_id = %s AND ei.category = %s",
+            (user_id, slug),
+        )
+        cursor.execute(
+            "DELETE FROM category_budget_limits WHERE user_id = %s AND category = %s",
+            (user_id, slug),
+        )
+        cursor.execute(
+            "UPDATE recurring_expenses SET category = 'other' "
+            "WHERE user_id = %s AND category = %s",
+            (user_id, slug),
+        )
+        cursor.execute(
+            "UPDATE user_category_rules SET category = 'other' "
+            "WHERE user_id = %s AND category = %s",
+            (user_id, slug),
+        )
+        cursor.execute(
+            "DELETE FROM user_categories WHERE id = %s AND user_id = %s",
+            (category_id, user_id),
+        )
+        return cursor.rowcount > 0
+
+
+def empty_category_breakdown(categories=None):
+    from api.categorize import CATEGORIES
+    cats = categories if categories is not None else CATEGORIES
+    return {c: 0.0 for c in cats}
+
+
+def breakdown_from_items(items, categories=None):
+    breakdown = empty_category_breakdown(categories)
     for item in items:
         category = item.get("category", "other")
+        amount = as_float(item.get("amount", 0))
         if category in breakdown:
-            breakdown[category] += as_float(item.get("amount", 0))
+            breakdown[category] += amount
+        else:
+            breakdown[category] = breakdown.get(category, 0.0) + amount
     return breakdown
 
 
-def breakdown_from_row(row, items):
+def breakdown_from_row(row, items, categories=None):
     from api.categorize import CATEGORIES
+    cats = categories if categories is not None else CATEGORIES
     if items:
-        return breakdown_from_items(items)
-    return {c: as_float(row.get(c, 0)) for c in CATEGORIES}
+        return breakdown_from_items(items, cats)
+    return {c: as_float(row.get(c, 0)) for c in cats}
 
 
-def category_sum_select_sql(item_alias="ei"):
+def category_sum_select_sql(item_alias="ei", categories=None):
     from api.categorize import CATEGORIES
+    cats = categories if categories is not None else CATEGORIES
     return ", ".join(
         f"COALESCE(SUM(CASE WHEN {item_alias}.category = '{c}' "
         f"THEN {item_alias}.amount ELSE 0 END), 0) AS \"{c}\""
-        for c in CATEGORIES
+        for c in cats
     )
 
 
@@ -441,24 +618,42 @@ def legacy_category_sum_select_sql(expense_alias="e"):
     )
 
 
-def merge_breakdown_rows(primary, legacy):
+def merge_breakdown_rows(primary, legacy, categories=None):
     from api.categorize import CATEGORIES
-    merged = empty_category_breakdown()
-    for category in CATEGORIES:
+    cats = list(categories) if categories is not None else list(CATEGORIES)
+    for source in (primary, legacy):
+        for key in source.keys() if hasattr(source, "keys") else []:
+            if key not in cats and key not in ("spent", "days_logged", "allowance", "remaining"):
+                cats.append(key)
+    merged = empty_category_breakdown(cats)
+    for category in cats:
         merged[category] = as_float(primary.get(category, 0)) + as_float(legacy.get(category, 0))
     return merged
 
 
-def query_budget_category_breakdown(cursor, budget_id):
+def query_budget_category_breakdown(cursor, budget_id, categories=None):
     from api.categorize import CATEGORIES
 
+    cats = list(categories) if categories is not None else None
+    if cats is None:
+        cursor.execute("SELECT user_id FROM budgets WHERE id = %s", (budget_id,))
+        owner = cursor.fetchone()
+        user_id = owner["user_id"] if owner and isinstance(owner, dict) else (
+            owner[0] if owner else None
+        )
+        cats = list(allowed_category_slugs(user_id)) if user_id else list(CATEGORIES)
+
     cursor.execute(
-        f'SELECT {category_sum_select_sql()} '
-        f'FROM expense_items ei JOIN expenses e ON ei.expense_id = e.id '
-        f'WHERE e.budget_id = %s',
+        "SELECT ei.category AS category, COALESCE(SUM(ei.amount), 0) AS total "
+        "FROM expense_items ei JOIN expenses e ON ei.expense_id = e.id "
+        "WHERE e.budget_id = %s GROUP BY ei.category",
         (budget_id,),
     )
-    item_row = cursor.fetchone() or {}
+    item_row = {
+        row["category"]: as_float(row["total"])
+        for row in cursor.fetchall()
+        if row.get("category")
+    }
     cursor.execute(
         f'SELECT {legacy_category_sum_select_sql()} FROM expenses e '
         f'WHERE e.budget_id = %s '
@@ -466,19 +661,25 @@ def query_budget_category_breakdown(cursor, budget_id):
         (budget_id,),
     )
     legacy_row = cursor.fetchone() or {}
-    return merge_breakdown_rows(item_row, legacy_row)
+    return merge_breakdown_rows(item_row, legacy_row, cats)
 
 
-def query_user_category_breakdown(cursor, user_id, start_date, end_date):
+def query_user_category_breakdown(cursor, user_id, start_date, end_date, categories=None):
+    cats = list(categories) if categories is not None else list(allowed_category_slugs(user_id))
     cursor.execute(
-        f'SELECT {category_sum_select_sql()} '
-        f'FROM expense_items ei '
-        f'JOIN expenses e ON ei.expense_id = e.id '
-        f'JOIN budgets b ON e.budget_id = b.id '
-        f'WHERE b.user_id = %s AND e.expense_date >= %s AND e.expense_date < %s',
+        "SELECT ei.category AS category, COALESCE(SUM(ei.amount), 0) AS total "
+        "FROM expense_items ei "
+        "JOIN expenses e ON ei.expense_id = e.id "
+        "JOIN budgets b ON e.budget_id = b.id "
+        "WHERE b.user_id = %s AND e.expense_date >= %s AND e.expense_date < %s "
+        "GROUP BY ei.category",
         (user_id, start_date, end_date),
     )
-    item_row = cursor.fetchone() or {}
+    item_row = {
+        row["category"]: as_float(row["total"])
+        for row in cursor.fetchall()
+        if row.get("category")
+    }
     cursor.execute(
         f'SELECT {legacy_category_sum_select_sql()} FROM expenses e '
         f'JOIN budgets b ON e.budget_id = b.id '
@@ -487,7 +688,7 @@ def query_user_category_breakdown(cursor, user_id, start_date, end_date):
         (user_id, start_date, end_date),
     )
     legacy_row = cursor.fetchone() or {}
-    return merge_breakdown_rows(item_row, legacy_row)
+    return merge_breakdown_rows(item_row, legacy_row, cats)
 
 
 def expense_select_columns_legacy():
@@ -718,11 +919,13 @@ def get_monthly_summary(user_id, start_date, end_date):
 
 
 def build_period_report(user_id, start_date, end_date, label=None):
-    from api.categorize import CATEGORIES
-
     weeks, breakdown = get_monthly_summary(user_id, start_date, end_date)
     snapshot = build_savings_snapshot(weeks, finalized_only=False)
-    cat_totals = {c: as_float(breakdown.get(c, 0)) for c in CATEGORIES}
+    categories = allowed_category_slugs(user_id)
+    cat_totals = {c: as_float(breakdown.get(c, 0)) for c in categories}
+    for key, value in breakdown.items():
+        if key not in cat_totals:
+            cat_totals[key] = as_float(value)
     weekly_data = [
         {
             "week_start": str(w["week_start_date"]),
@@ -741,6 +944,7 @@ def build_period_report(user_id, start_date, end_date, label=None):
         "total_spent": snapshot["total_spent"],
         "total_saved": snapshot["total_allowance"] - snapshot["total_spent"],
         "breakdown": cat_totals,
+        "custom_categories": get_user_categories(user_id),
         "weeks": weekly_data,
         "num_weeks": len(weekly_data),
         "raw_weeks": weeks,
@@ -780,7 +984,11 @@ def get_yearly_summary(user_id, year):
             "num_weeks": len(month_weeks),
         })
 
-    from api.categorize import CATEGORIES
+    categories = allowed_category_slugs(user_id)
+    cat_totals = {c: as_float(breakdown.get(c, 0)) for c in categories}
+    for key, value in breakdown.items():
+        if key not in cat_totals:
+            cat_totals[key] = as_float(value)
     return {
         "year": year,
         "label": str(year),
@@ -789,7 +997,8 @@ def get_yearly_summary(user_id, year):
         "total_allowance": snapshot["total_allowance"],
         "total_spent": snapshot["total_spent"],
         "total_saved": snapshot["total_allowance"] - snapshot["total_spent"],
-        "breakdown": {c: as_float(breakdown.get(c, 0)) for c in CATEGORIES},
+        "breakdown": cat_totals,
+        "custom_categories": get_user_categories(user_id),
         "months": months,
         "num_months": len(months),
         "num_weeks": len(weeks),
@@ -996,19 +1205,28 @@ def update_expense_total(cursor, expense_id):
     return total
 
 
-def day_expense_payload(cursor, expense_id):
+def day_expense_payload(cursor, expense_id, categories=None):
     cols = expense_select_columns_legacy()
     cursor.execute(f'SELECT {cols} FROM expenses WHERE id = %s', (expense_id,))
     row = cursor.fetchone()
     if not row:
         return None
+    if categories is None:
+        cursor.execute(
+            'SELECT b.user_id FROM expenses e JOIN budgets b ON e.budget_id = b.id '
+            'WHERE e.id = %s',
+            (expense_id,),
+        )
+        owner = cursor.fetchone()
+        user_id = owner["user_id"] if owner else None
+        categories = allowed_category_slugs(user_id) if user_id else None
     cursor.execute(
         'SELECT id, name, amount, category, notes, tags FROM expense_items '
         'WHERE expense_id = %s ORDER BY created_at',
         (expense_id,),
     )
     items = [expense_item_dict(item) for item in cursor.fetchall()]
-    breakdown = breakdown_from_row(row, items)
+    breakdown = breakdown_from_row(row, items, categories)
     return {
         **breakdown,
         "total": as_float(row["total"]),
@@ -1245,12 +1463,13 @@ def get_user_category_rules(user_id):
 
 
 def learn_category_correction(user_id, name, category):
-    from api.categorize import CATEGORIES, categorize_item, extract_learn_patterns
+    from api.categorize import categorize_item, extract_learn_patterns
 
-    if category not in CATEGORIES:
+    allowed = set(allowed_category_slugs(user_id))
+    if category not in allowed:
         return
     user_rules = get_user_category_rules(user_id)
-    suggested = categorize_item(name, user_rules)
+    suggested = categorize_item(name, user_rules, allowed_categories=allowed)
     if suggested == category:
         return
 
@@ -1272,9 +1491,8 @@ def learn_category_correction(user_id, name, category):
 
 
 def get_category_limits(user_id):
-    from api.categorize import CATEGORIES
-
-    limits = {category: None for category in CATEGORIES}
+    categories = allowed_category_slugs(user_id)
+    limits = {category: None for category in categories}
     with db_cursor(dict_cursor=True) as cursor:
         cursor.execute(
             'SELECT category, weekly_limit FROM category_budget_limits WHERE user_id = %s',
@@ -1287,11 +1505,11 @@ def get_category_limits(user_id):
 
 
 def set_category_limits(user_id, limits):
-    from api.categorize import CATEGORIES
+    allowed = set(allowed_category_slugs(user_id))
 
     with db_cursor(commit=True) as cursor:
         for category, limit in limits.items():
-            if category not in CATEGORIES:
+            if category not in allowed:
                 continue
             if limit is None or limit <= 0:
                 cursor.execute(
@@ -1307,13 +1525,17 @@ def set_category_limits(user_id, limits):
                 )
 
 
-def build_category_status(totals, limits):
+def build_category_status(totals, limits, categories=None):
     from api.categorize import CATEGORIES
 
+    cats = categories if categories is not None else CATEGORIES
+    if categories is None and limits:
+        cats = list(dict.fromkeys([*CATEGORIES, *limits.keys()]))
+
     status = {}
-    for category in CATEGORIES:
+    for category in cats:
         spent = as_float(totals.get(category, 0))
-        limit = limits.get(category)
+        limit = limits.get(category) if limits else None
         if limit is None or limit <= 0:
             status[category] = {
                 "spent": spent,
@@ -1329,7 +1551,7 @@ def build_category_status(totals, limits):
             "limit": limit,
             "pct": pct,
             "over": spent > limit,
-            "warning": spent >= limit * 0.8 and spent <= limit,
+            "warning": pct is not None and pct >= 80 and spent <= limit,
         }
     return status
 

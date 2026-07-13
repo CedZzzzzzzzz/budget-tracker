@@ -22,17 +22,18 @@ def match_user_rule(lower, tokens, pattern):
     return pattern in tokens or pattern == lower
 
 
-def categorize_item(name: str, user_rules=None) -> str:
+def categorize_item(name: str, user_rules=None, allowed_categories=None) -> str:
     lower = (name or "").lower().strip()
     if not lower:
         return "other"
 
     tokens = tokenize(lower)
+    allowed = set(allowed_categories) if allowed_categories is not None else set(CATEGORIES)
     if user_rules:
         for rule in user_rules:
             pattern = (rule.get("pattern") or "").lower().strip()
             category = rule.get("category")
-            if not pattern or category not in CATEGORIES:
+            if not pattern or category not in allowed:
                 continue
             if match_user_rule(lower, tokens, pattern):
                 return category

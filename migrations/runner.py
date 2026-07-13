@@ -71,6 +71,7 @@ MIGRATIONS = [
     ("007_savings_goals", lambda cursor: execute_sql_file(cursor, "006_savings_goals.sql")),
     ("008_expense_notes_tags", lambda cursor: execute_sql_file(cursor, "007_expense_notes_tags.sql")),
     ("009_onboarding", lambda cursor: execute_sql_file(cursor, "008_onboarding.sql")),
+    ("010_user_categories", lambda cursor: execute_sql_file(cursor, "009_user_categories.sql")),
 ]
 
 

@@ -6,7 +6,8 @@ class Config:
     SESSION_COOKIE_SECURE = False
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
-    PERMANENT_SESSION_LIFETIME = 86400
+    PERMANENT_SESSION_LIFETIME = timedelta(days=30)
+    SESSION_REFRESH_EACH_REQUEST = True
     DEBUG = True
 
 class ProductionConfig(Config):

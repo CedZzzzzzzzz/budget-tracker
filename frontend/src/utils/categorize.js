@@ -5,12 +5,46 @@ export const CATEGORY_LABELS = data.labels;
 export const CATEGORY_ICONS = data.icons;
 export const CATEGORY_COLORS = data.colors;
 
-export function categoryColor(category) {
-  return CATEGORY_COLORS[category] || CATEGORY_COLORS.other;
+export const CUSTOM_CATEGORY_COLORS = [
+  '#94a3b8',
+  '#38bdf8',
+  '#34d399',
+  '#fbbf24',
+  '#fb923c',
+  '#f472b6',
+  '#a78bfa',
+  '#f87171',
+];
+
+export function mergeCategoryMeta(customCategories = []) {
+  const categories = [...CATEGORIES];
+  const labels = { ...CATEGORY_LABELS };
+  const colors = { ...CATEGORY_COLORS };
+
+  for (const custom of customCategories) {
+    if (!custom?.slug) continue;
+    if (!categories.includes(custom.slug)) categories.push(custom.slug);
+    labels[custom.slug] = custom.label || custom.slug;
+    colors[custom.slug] = custom.color || CATEGORY_COLORS.other;
+  }
+
+  return { categories, labels, colors };
 }
 
-export function categoryTintStyle(category, { bgAlpha = 0.15, borderAlpha = 0.28 } = {}) {
-  const hex = categoryColor(category);
+export function categoryColor(category, colors = CATEGORY_COLORS) {
+  return colors[category] || CATEGORY_COLORS.other;
+}
+
+export function categoryLabel(category, labels = CATEGORY_LABELS) {
+  return labels[category] || category;
+}
+
+export function categoryTintStyle(category, {
+  bgAlpha = 0.15,
+  borderAlpha = 0.28,
+  colors = CATEGORY_COLORS,
+} = {}) {
+  const hex = categoryColor(category, colors);
   return {
     color: hex,
     backgroundColor: hexToRgba(hex, bgAlpha),
@@ -44,16 +78,17 @@ function matchUserRule(lower, tokens, pattern) {
   return tokens.has(pattern) || pattern === lower;
 }
 
-export function categorizeItem(name, userRules = null) {
+export function categorizeItem(name, userRules = null, allowedCategories = CATEGORIES) {
   const lower = (name || '').toLowerCase().trim();
   if (!lower) return 'other';
 
   const tokens = tokenize(lower);
+  const allowed = new Set(allowedCategories || CATEGORIES);
   if (userRules?.length) {
     for (const rule of userRules) {
       const pattern = (rule.pattern || '').toLowerCase().trim();
       const category = rule.category;
-      if (!pattern || !CATEGORIES.includes(category)) continue;
+      if (!pattern || !allowed.has(category)) continue;
       if (matchUserRule(lower, tokens, pattern)) return category;
     }
   }
