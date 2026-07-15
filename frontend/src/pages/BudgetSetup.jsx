@@ -217,6 +217,14 @@ export default function BudgetSetup() {
   const [customMessage, setCustomMessage] = useState('');
   const [customModalOpen, setCustomModalOpen] = useState(false);
 
+  const [incomeSources, setIncomeSources] = useState([]);
+  const [incLabel, setIncLabel] = useState('');
+  const [incAmount, setIncAmount] = useState('');
+  const [incSaving, setIncSaving] = useState(false);
+  const [incError, setIncError] = useState('');
+  const [incMessage, setIncMessage] = useState('');
+  const [incApplySaving, setIncApplySaving] = useState(false);
+
   useEffect(() => {
     primeCsrf();
 
@@ -241,6 +249,7 @@ export default function BudgetSetup() {
         if (d.category_limits) setCategoryLimits(d.category_limits);
         if (d.recurring_expenses) setRecurring(d.recurring_expenses);
         if (d.custom_categories) setCustomCategories(d.custom_categories);
+        if (d.income_sources) setIncomeSources(d.income_sources);
       })
       .catch(() => navigate('/'))
       .finally(() => setLoading(false));
@@ -285,6 +294,85 @@ export default function BudgetSetup() {
       .reduce((s, r) => s + r.amount, 0),
     [activeRecurring],
   );
+
+  const activeIncome = useMemo(
+    () => incomeSources.filter((s) => s.active),
+    [incomeSources],
+  );
+
+  const incomeTotal = useMemo(
+    () => activeIncome.reduce((s, item) => s + Number(item.amount || 0), 0),
+    [activeIncome],
+  );
+
+  const addIncomeSource = async () => {
+    setIncError('');
+    setIncMessage('');
+    const amount = parseFloat(incAmount);
+    if (!incLabel.trim()) return setIncError('Enter a name (e.g. Allowance, Side job).');
+    if (!amount || amount <= 0) return setIncError('Enter a valid amount.');
+    setIncSaving(true);
+    try {
+      const res = await apiFetch('/api/income-sources', {
+        method: 'POST',
+        body: JSON.stringify({ label: incLabel.trim(), amount }),
+      });
+      const { data, ok } = await parseApiResponse(res);
+      if (!ok) throw new Error(data.error || 'Could not add income source');
+      setIncomeSources(data.income_sources || []);
+      setIncLabel('');
+      setIncAmount('');
+      setIncMessage('Income source added.');
+    } catch (err) {
+      setIncError(err.message || 'Could not add income source');
+    } finally {
+      setIncSaving(false);
+    }
+  };
+
+  const toggleIncomeSource = async (item) => {
+    setIncError('');
+    try {
+      const res = await apiFetch(`/api/income-sources/${item.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ active: !item.active }),
+      });
+      const { data, ok } = await parseApiResponse(res);
+      if (!ok) throw new Error(data.error || 'Could not update');
+      setIncomeSources(data.income_sources || []);
+    } catch (err) {
+      setIncError(err.message || 'Could not update');
+    }
+  };
+
+  const removeIncomeSource = async (id) => {
+    if (!window.confirm('Remove this income source?')) return;
+    setIncError('');
+    try {
+      const res = await apiFetch(`/api/income-sources/${id}`, { method: 'DELETE' });
+      const { data, ok } = await parseApiResponse(res);
+      if (!ok) throw new Error(data.error || 'Could not remove');
+      setIncomeSources(data.income_sources || []);
+    } catch (err) {
+      setIncError(err.message || 'Could not remove');
+    }
+  };
+
+  const applyIncomeToWeek = async () => {
+    setIncError('');
+    setIncMessage('');
+    setIncApplySaving(true);
+    try {
+      const res = await apiFetch('/api/income-sources/apply', { method: 'POST' });
+      const { data, ok } = await parseApiResponse(res);
+      if (!ok) throw new Error(data.error || 'Could not apply to this week');
+      setIncMessage(`This week’s total is now ₱${Number(data.allowance).toFixed(2)}.`);
+    } catch (err) {
+      setIncError(err.message || 'Could not apply to this week');
+    } finally {
+      setIncApplySaving(false);
+    }
+  };
 
   const saveCategoryLimits = async () => {
     setLimitsError('');
@@ -470,6 +558,112 @@ export default function BudgetSetup() {
 
   return (
     <div className="w-full space-y-5">
+      <section className={`${card} p-5`}>
+        <SectionTitle>Income sources</SectionTitle>
+        <p className={`mb-4 ${subtext}`}>
+          Break down weekly money by source (allowance, part-time, etc.). Active amounts add up for your week&apos;s total.
+        </p>
+
+        {incError && <div className="mb-4"><Alert type="error">{incError}</Alert></div>}
+        {incMessage && <div className="mb-4"><Alert type="success">{incMessage}</Alert></div>}
+
+        <div className={`${cardInner} mb-4 flex flex-col gap-3 p-4 sm:flex-row sm:items-end sm:justify-between`}>
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-purple-muted">Weekly total</p>
+            <p className="mt-0.5 text-2xl font-bold tracking-tight text-purple-text">
+              ₱{incomeTotal.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+            </p>
+            <p className="mt-1 text-xs text-purple-muted">
+              {activeIncome.length === 0
+                ? 'No active sources yet'
+                : `${activeIncome.length} active source${activeIncome.length === 1 ? '' : 's'}`}
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={incApplySaving || incomeTotal <= 0}
+            onClick={applyIncomeToWeek}
+            className={`${btnPrimary} shrink-0 disabled:opacity-50`}
+          >
+            {incApplySaving ? 'Applying…' : 'Use for this week'}
+          </button>
+        </div>
+
+        {incomeSources.length > 0 && (
+          <ul className="mb-4 space-y-2">
+            {incomeSources.map((item) => (
+              <li
+                key={item.id}
+                className={`${cardInner} flex items-center justify-between gap-3 p-3.5 ${item.active ? '' : 'opacity-60'}`}
+              >
+                <div className="min-w-0">
+                  <p className={`truncate text-sm font-medium ${item.active ? 'text-purple-text' : 'text-purple-muted line-through'}`}>
+                    {item.label}
+                  </p>
+                  <p className="mt-0.5 text-lg font-semibold text-purple-primary-light">
+                    ₱{Number(item.amount).toFixed(2)}
+                    <span className="ml-1 text-xs font-medium text-purple-muted">/wk</span>
+                  </p>
+                </div>
+                <div className="flex shrink-0 gap-1.5">
+                  <button
+                    type="button"
+                    className="glass-btn-ghost rounded-lg px-2.5 py-1.5 text-xs font-medium text-purple-soft hover:text-purple-text"
+                    onClick={() => toggleIncomeSource(item)}
+                  >
+                    {item.active ? 'Pause' : 'Resume'}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-red-400/20 bg-red-500/10 px-2.5 py-1.5 text-xs font-medium text-red-300 transition hover:bg-red-500/20"
+                    onClick={() => removeIncomeSource(item.id)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_120px_auto]">
+          <div>
+            <label className={label}>Name</label>
+            <input
+              type="text"
+              className={input}
+              placeholder="Allowance, Side job…"
+              value={incLabel}
+              onChange={(e) => setIncLabel(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addIncomeSource()}
+            />
+          </div>
+          <div>
+            <label className={label}>Weekly amount</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              className={input}
+              placeholder="0"
+              value={incAmount}
+              onChange={(e) => setIncAmount(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addIncomeSource()}
+            />
+          </div>
+          <div className="flex items-end">
+            <button
+              type="button"
+              disabled={incSaving}
+              onClick={addIncomeSource}
+              className={`${btnPrimary} w-full sm:w-auto`}
+            >
+              {incSaving ? '…' : 'Add'}
+            </button>
+          </div>
+        </div>
+      </section>
+
       <BudgetSnapshot
         limitsSet={limitsSet}
         limitsCategories={limitsCategories}

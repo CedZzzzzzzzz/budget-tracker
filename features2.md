@@ -3,7 +3,7 @@
 Candidates to pick from — not ordered. Check off here and in [features.md](features.md) when something ships.
 
 - [x] Savings goals (target amount + progress tracking)
-- [ ] Comparison view (this month vs last month)
+- [ ] ~~Comparison view (this month vs last month)~~ — skipped (not needed; monthly nav + week comparison suffice)
 - [ ] Weekly summary email / push notification
 - [x] Notes / tags on individual expense items (e.g. note “split with Ana”, tags `work, gcash`)
 - [x] Custom user-defined categories (beyond the fixed 8)
@@ -12,11 +12,11 @@ Candidates to pick from — not ordered. Check off here and in [features.md](fea
 - [x] Date-range custom reports (not just week/month)
 - [ ] Spending anomaly detection (flag unusual spikes)
 - [ ] Downloadable data backup / full account export (GDPR-style)
-- [ ] In-app AI insights (currently only inside the PDF export)
+- [x] In-app AI insights (Gemini dual-key + rule-based fallback)
 - [ ] Natural-language expense entry ("spent 120 on jeepney today")
 - [ ] Receipt photo scanning / OCR to auto-fill items
 - [ ] Multi-currency support (currently peso-only, `&#8369;` is hardcoded)
-- [ ] Income sources beyond a single weekly allowance
+- [x] Income sources beyond a single weekly allowance
 - [ ] Email verification on registration
 - [x] "Remember me" / persistent login option
 - [ ] Two-factor authentication (2FA)
@@ -31,4 +31,4 @@ Candidates to pick from — not ordered. Check off here and in [features.md](fea
 - [ ] Structured logging & error monitoring (e.g. Sentry)
 - [ ] Admin dashboard (usage metrics, user management)
 
-**Just shipped:** Remember me · Keyboard shortcuts · Custom categories · Onboarding · Notes/tags on expenses · Date-range reports · Yearly summary + PDF · Savings goals · Savings ledger.
+**Just shipped:** Income sources · In-app AI insights · Remember me · Keyboard shortcuts · Custom categories · Onboarding · Notes/tags on expenses · Date-range reports · Yearly summary + PDF · Savings goals · Savings ledger.

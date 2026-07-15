@@ -8,7 +8,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
 from config import config
 import database as db
-from api.routes import api, get_week_range
+from api.routes import api
 from extensions import limiter
 
 
@@ -86,16 +86,6 @@ if __name__ == "__main__":
     config_name = os.getenv("FLASK_ENV", "development")
     is_dev = config_name == "development"
     app = create_app(config_name)
-    week_start, week_end = get_week_range()
-
-    if is_dev:
-        print("\n" + "="*50)
-        print("BUDGET TRACKER")
-        print("="*50)
-        print(f"http://localhost:5000")
-        print(f"Week: {week_start} to {week_end}")
-        print("="*50 + "\n")
-
     port = int(os.environ.get("PORT", 5000))
     use_reload = env_bool("FLASK_RELOAD", is_dev)
 
@@ -105,6 +95,7 @@ if __name__ == "__main__":
         debug=is_dev,
         use_reloader=use_reload and is_dev,
         reloader_type="stat" if os.name == "nt" else "auto",
+        threaded=True,
     )
 
 app = create_app(os.getenv("FLASK_ENV", "production"))

@@ -48,8 +48,7 @@ async function checkAuth() {
         const username = data.username;
         document.getElementById('userGreeting').textContent = `Hi, ${username}!`;
         return true;
-    } catch (e) {
-        console.error('Auth check failed:', e);
+    } catch {
         window.location.href = '/';
         return false;
     }
@@ -63,8 +62,7 @@ async function handleLogout() {
         } else {
             alert('Logout failed. Please try again.');
         }
-    } catch (e) {
-        console.error('Logout failed:', e);
+    } catch {
         alert('Connection error. Please try again.');
     }
 }
@@ -135,7 +133,9 @@ async function loadWeekInfo() {
             document.getElementById('daysRemaining').textContent = data.days_remaining;
             document.getElementById('currentDay').textContent = data.current_day;
         }
-    } catch (e) { console.error(e); }
+    } catch {
+        /* ignore */
+    }
 }
 
 async function startTracking() {
@@ -195,7 +195,9 @@ async function fetchBudgetData() {
             renderExpenseList();
             updateDayButtons();
         }
-    } catch (e) { console.error(e); }
+    } catch {
+        /* ignore */
+    }
 }
 
 function updateDisplay(totals = null) {
@@ -309,7 +311,9 @@ async function loadMonthlySummary() {
                 renderWeeklyBreakdown(data.weeks);
             }
         }
-    } catch (e) { console.error(e); }
+    } catch {
+        /* ignore */
+    }
 }
 
 function renderWeeklyBreakdown(weeks) {
@@ -335,36 +339,21 @@ window.toggleTheme = toggleTheme;
 window.exportMonthlyPDF = exportMonthlyPDF;
 
 window.addEventListener('DOMContentLoaded', async () => {
-    console.log('=== PAGE LOAD START ===');
-
     const isAuthenticated = await checkAuth();
-    if (!isAuthenticated) {
-        console.log('User not authenticated, redirecting to login.');
-        return;
-    }
-    console.log('User authenticated successfully.');
-    updateDayButtons();
+    if (!isAuthenticated) return;
 
+    updateDayButtons();
     await loadWeekInfo();
 
     try {
-        console.log('Fetching budget from API...');
         const res = await fetch('/api/get-budget');
-        console.log('Response status:', res.status);
 
         if (res.ok) {
             const data = await res.json();
-            console.log('Data received:', data);
-            console.log('Allowance from API:', data.allowance);
-
             allowance = data.allowance || 0;
             expenses = data.expenses || {};
 
-            console.log('Allowance variable set to:', allowance);
-            console.log('Is allowance > 0?', allowance > 0);
-
             if (allowance > 0) {
-                console.log('✅ SHOWING TRACKER SCREEN');
                 allowanceDisplay.textContent = `₱${allowance.toFixed(2)}`;
                 setupScreen.classList.remove('active');
                 trackerScreen.classList.add('active');
@@ -374,25 +363,21 @@ window.addEventListener('DOMContentLoaded', async () => {
                 renderExpenseList();
                 updateDayButtons();
             } else {
-                console.log('❌ SHOWING SETUP SCREEN - No allowance');
                 setupScreen.classList.add('active');
                 trackerScreen.classList.remove('active');
                 exportBtn?.classList.add('hidden');
             }
         } else {
-            console.log('❌ SHOWING SETUP SCREEN - Response not OK');
             setupScreen.classList.add('active');
             trackerScreen.classList.remove('active');
             exportBtn?.classList.add('hidden');
         }
-    } catch (e) {
-        console.log('❌ SHOWING SETUP SCREEN - Error caught:', e);
+    } catch {
         setupScreen.classList.add('active');
         trackerScreen.classList.remove('active');
         exportBtn?.classList.add('hidden');
     }
 
-    console.log('=== PAGE LOAD END ===');
     loadMonthlySummary();
 });
 

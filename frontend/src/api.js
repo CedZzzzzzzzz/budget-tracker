@@ -12,12 +12,14 @@ export function markLoginSession(rememberMe) {
     sessionStorage.setItem(TAB_SESSION_KEY, '1');
   }
   localStorage.removeItem('rememberMe');
+  sessionStorage.removeItem('insights_shown');
 }
 
 export function clearLoginSession() {
   localStorage.removeItem(PERSISTENT_SESSION_KEY);
   sessionStorage.removeItem(TAB_SESSION_KEY);
   localStorage.removeItem('rememberMe');
+  sessionStorage.removeItem('insights_shown');
 }
 
 export function isClientSessionValid(rememberMe = null) {

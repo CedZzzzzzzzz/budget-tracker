@@ -112,10 +112,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         const data = await response.json();
 
         if (data.authenticated) {
-            console.log('User already authenticated, redirecting to dashboard');
             window.location.href = '/dashboard';
         }
-    } catch (error) {
-        console.log('Not authenticated, showing login page');
+    } catch {
+        /* stay on login */
     }
 });

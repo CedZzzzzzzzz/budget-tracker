@@ -121,6 +121,67 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes insight-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(28px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes insight-line-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes insight-progress {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+
+.insight-popup-notif {
+  opacity: 0;
+  overflow: hidden;
+  border-radius: 16px;
+  padding: 14px 14px 12px;
+  background: rgba(36, 16, 72, 0.88);
+  border: 1px solid rgba(185, 130, 255, 0.32);
+  box-shadow:
+    0 22px 48px -18px rgba(0, 0, 0, 0.72),
+    0 0 0 1px rgba(255, 255, 255, 0.05),
+    0 10px 32px -12px rgba(139, 60, 224, 0.5);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+.insight-popup-notif--in {
+  animation: insight-toast-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.insight-popup-notif__body {
+  animation: insight-line-in 0.28s ease-out;
+}
+
+.insight-popup-notif__progress {
+  margin-top: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #8b3ce0, #b982ff);
+  transform-origin: left center;
+  animation: insight-progress 4.5s linear forwards;
+}
+
+[data-theme="light"] .insight-popup-notif {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(123, 44, 191, 0.2);
+  box-shadow:
+    0 18px 40px -16px rgba(60, 9, 108, 0.3),
+    0 0 0 1px rgba(123, 44, 191, 0.08);
+}
+
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
   25% { transform: translateX(-6px); }

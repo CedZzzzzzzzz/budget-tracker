@@ -4,7 +4,6 @@ import csv
 import database as db
 from io import StringIO
 from functools import wraps
-import google.generativeai as genai
 import logging
 import os
 import secrets
@@ -15,7 +14,8 @@ from api.email_service import (
     send_password_reset_email,
     send_password_reset_email_background,
 )
-from api.errors import GEMINI_ERRORS, handle_api_errors, internal_error
+from api.errors import handle_api_errors, internal_error
+from api.insights import build_insights, generate_budget_insights
 from api.pdf_report import build_monthly_pdf, build_yearly_pdf, build_range_pdf, pdf_response
 from extensions import limiter
 
@@ -66,57 +66,6 @@ def parse_item_notes_tags(data):
         return None, None, str(exc)
     return notes, tags, None
 
-
-prompt = (
-    "You are a financial assistant that provides insights and recommendations based on the user's budget weekly data.\n"
-    "Give exactly 3 lines, a short paragraph/analysis.\n"
-    "Provide actionable advice for the user to improve their spending habits and manage their budget effectively.\n"
-    "Maximum of 80 characters.\n"
-    "Return only the 3 lines, no bullet points, no numbering, only follow the instruction stated above.\n"
-    "Mention the username.\n"
-    "Always use'&#8369;' when mentioning amounts.\n"
-    "You may use this as reference for the data structure:\n"
-    "- Username : {username}\n"
-    "- Allowance : &#8369;{allowance:.2f}\n"
-    "- Spending by category :\n"
-    "{category_lines}\n"
-    "- Total Spent : &#8369;{spent:.2f}\n"
-    "- Remaining : &#8369;{remaining:.2f}"
-)
-
-
-def generate_budget_insights(allowance, totals, period="week", labels=None):
-    try:
-        label_map = labels or CATEGORY_LABELS
-        skip = {"spent", "remaining", "allowance"}
-        category_keys = [
-            key for key, value in totals.items()
-            if key not in skip and float(value or 0) > 0
-        ]
-        category_lines = "\n".join(
-            f"            - {label_map.get(c, c)} : &#8369;{totals.get(c, 0):.2f}"
-            for c in category_keys
-        ) or "            - No category spending yet"
-        notes = prompt.format(
-            username=session.get("username"),
-            allowance = allowance,
-            category_lines = category_lines,
-            spent = totals['spent'],
-            remaining = totals['remaining'],
-        )
-        genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-        model = genai.GenerativeModel("gemini-2.5-flash-lite")
-
-        response = model.generate_content(notes)
-        lines = [line.strip().replace("₱", "&#8369;") for line in response.text.strip().split("\n") if line.strip()]
-        return lines[:3]
-    except GEMINI_ERRORS as exc:
-        logger.warning("Gemini insight generation failed: %s", exc)
-        return [
-            "Review your spending habits to identify areas for improvement.",
-            "Consider setting aside a portion of your remaining budget for savings.",
-            "Track your expenses daily to stay within your allowance and avoid overspending.",
-        ]
 
 DAYS_MAP = {
     "Sunday": 0, "Monday": 1, "Tuesday": 2, "Wednesday": 3,
@@ -394,6 +343,7 @@ def register():
         session.permanent = False
         session["user_id"] = user_id
         session["username"] = username
+        session["insights_served"] = False
         return jsonify({
             "success": True,
             "username": username,
@@ -425,6 +375,7 @@ def login():
     session.permanent = remember
     session["user_id"] = user["id"]
     session["username"] = user["username"]
+    session["insights_served"] = False
     return jsonify({
         "success": True,
         "username": user["username"],
@@ -598,6 +549,63 @@ def dashboard():
             "category_rules": db.get_user_category_rules(user_id),
             "custom_categories": db.get_user_categories(user_id),
         })
+
+
+@api.route("/insights", methods=["GET"])
+@login_required
+@handle_api_errors
+def insights():
+    if session.get("insights_served"):
+        return jsonify({
+            "insights": [],
+            "source": "rules",
+            "period": "week",
+            "served": True,
+        })
+
+    user_id = get_user_id()
+    week_start, week_end = get_week_range()
+    budget, rows, items_by_expense, comparison = db.fetch_dashboard(
+        user_id, week_start, week_end,
+    )
+    labels = db.category_labels_for_user(user_id)
+    week = week_info_payload()
+    days_remaining = week.get("days_remaining")
+
+    if not budget:
+        empty_totals = {
+            **{c: 0 for c in db.allowed_category_slugs(user_id)},
+            "spent": 0,
+            "remaining": 0,
+        }
+        result = build_insights(
+            0,
+            empty_totals,
+            period="week",
+            labels=labels,
+            username=session.get("username"),
+            comparison=comparison,
+            days_remaining=days_remaining,
+            prefer_speed=True,
+        )
+    else:
+        budget_data = json_budget_payload(budget, rows, items_by_expense, user_id=user_id)
+        totals = budget_data["totals"]
+        category_status = budget_data.get("category_status")
+        result = build_insights(
+            budget_data["allowance"],
+            totals,
+            period="week",
+            labels=labels,
+            username=session.get("username"),
+            category_status=category_status,
+            comparison=comparison,
+            days_remaining=days_remaining,
+            prefer_speed=True,
+        )
+
+    session["insights_served"] = True
+    return jsonify({**result, "period": "week", "served": False})
 
 
 @api.route("/set-allowance", methods=["POST"])
@@ -779,11 +787,140 @@ def get_budget():
 @handle_api_errors
 def get_budget_settings():
     user_id = get_user_id()
+    income_sources = db.get_user_income_sources(user_id)
     return jsonify({
         "category_limits": db.get_category_limits(user_id),
         "recurring_expenses": db.get_recurring_expenses(user_id),
         "category_rules": db.get_user_category_rules(user_id),
         "custom_categories": db.get_user_categories(user_id),
+        "income_sources": income_sources,
+        "income_total": db.income_sources_total(sources=income_sources, active_only=True),
+    })
+
+
+@api.route("/income-sources", methods=["GET"])
+@login_required
+@handle_api_errors
+def list_income_sources():
+    user_id = get_user_id()
+    sources = db.get_user_income_sources(user_id)
+    return jsonify({
+        "income_sources": sources,
+        "income_total": db.income_sources_total(sources=sources, active_only=True),
+    })
+
+
+@api.route("/income-sources", methods=["POST"])
+@login_required
+@handle_api_errors
+def create_income_source():
+    data = request.get_json() or {}
+    user_id = get_user_id()
+    try:
+        source = db.create_user_income_source(
+            user_id,
+            label=data.get("label") or data.get("name"),
+            amount=data.get("amount"),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    sources = db.get_user_income_sources(user_id)
+    apply_week = bool(data.get("apply_to_week"))
+    allowance = None
+    if apply_week:
+        total = db.income_sources_total(sources=sources, active_only=True)
+        if total > 0:
+            week_start, week_end = get_week_range()
+            existing = db.get_budget_by_week(user_id, week_start, week_end)
+            if existing:
+                db.update_budget(existing["id"], user_id, total)
+            else:
+                db.create_budget(user_id, week_start, week_end, total)
+            allowance = total
+
+    return jsonify({
+        "success": True,
+        "income_source": source,
+        "income_sources": sources,
+        "income_total": db.income_sources_total(sources=sources, active_only=True),
+        "allowance": allowance,
+    }), 201
+
+
+@api.route("/income-sources/<int:source_id>", methods=["PUT"])
+@login_required
+@handle_api_errors
+def update_income_source(source_id):
+    data = request.get_json() or {}
+    user_id = get_user_id()
+    fields = {}
+    if "label" in data or "name" in data:
+        fields["label"] = data.get("label") or data.get("name")
+    if "amount" in data:
+        fields["amount"] = data.get("amount")
+    if "active" in data:
+        fields["active"] = data.get("active")
+    if "sort_order" in data:
+        fields["sort_order"] = data.get("sort_order")
+    try:
+        source = db.update_user_income_source(source_id, user_id, **fields)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not source:
+        return jsonify({"error": "Income source not found."}), 404
+
+    sources = db.get_user_income_sources(user_id)
+    return jsonify({
+        "success": True,
+        "income_source": source,
+        "income_sources": sources,
+        "income_total": db.income_sources_total(sources=sources, active_only=True),
+    })
+
+
+@api.route("/income-sources/<int:source_id>", methods=["DELETE"])
+@login_required
+@handle_api_errors
+def delete_income_source(source_id):
+    user_id = get_user_id()
+    if not db.delete_user_income_source(source_id, user_id):
+        return jsonify({"error": "Income source not found."}), 404
+    sources = db.get_user_income_sources(user_id)
+    return jsonify({
+        "success": True,
+        "income_sources": sources,
+        "income_total": db.income_sources_total(sources=sources, active_only=True),
+    })
+
+
+@api.route("/income-sources/apply", methods=["POST"])
+@login_required
+@handle_api_errors
+def apply_income_sources():
+    user_id = get_user_id()
+    sources = db.get_user_income_sources(user_id)
+    total = db.income_sources_total(sources=sources, active_only=True)
+    if total <= 0:
+        return jsonify({"error": "Add at least one active income source first."}), 400
+
+    week_start, week_end = get_week_range()
+    existing = db.get_budget_by_week(user_id, week_start, week_end)
+    if existing:
+        db.update_budget(existing["id"], user_id, total)
+        budget_id = existing["id"]
+    else:
+        budget_id = db.create_budget(user_id, week_start, week_end, total)
+
+    with db.db_cursor(dict_cursor=True) as cursor:
+        totals = db.compute_budget_totals(cursor, budget_id)
+    return jsonify({
+        "success": True,
+        "allowance": total,
+        "budget_id": budget_id,
+        "totals": totals,
+        "income_sources": sources,
+        "income_total": total,
     })
 
 
@@ -1068,7 +1205,7 @@ def savings_snapshot():
         return jsonify({"error": "year is out of range"}), 400
 
     start_date, end_date, label = period_date_range(period, month=month, year=year)
-    ledger, _weeks = db.get_savings_ledger(user_id, start_date, end_date)
+    ledger, weeks = db.get_savings_ledger(user_id, start_date, end_date)
     return jsonify({
         "period": period,
         "label": label,
@@ -1078,7 +1215,7 @@ def savings_snapshot():
     })
 
 
-def _parse_goal_deadline(value):
+def parse_goal_deadline(value):
     if value is None or value == "":
         return None
     if isinstance(value, str):
@@ -1121,7 +1258,7 @@ def create_savings_goal_route():
     if current < 0:
         return jsonify({"error": "Current amount cannot be negative."}), 400
 
-    deadline = _parse_goal_deadline(data.get("deadline"))
+    deadline = parse_goal_deadline(data.get("deadline"))
     if deadline is False:
         return jsonify({"error": "Deadline must be YYYY-MM-DD."}), 400
 
@@ -1167,7 +1304,7 @@ def update_savings_goal_route(goal_id):
             return jsonify({"error": "Current amount cannot be negative."}), 400
         fields["current_amount"] = current
     if "deadline" in data:
-        deadline = _parse_goal_deadline(data.get("deadline"))
+        deadline = parse_goal_deadline(data.get("deadline"))
         if deadline is False:
             return jsonify({"error": "Deadline must be YYYY-MM-DD."}), 400
         fields["deadline"] = deadline
@@ -1382,6 +1519,8 @@ def export_monthly_pdf():
         total_allowance,
         {**cat_totals, "spent": total_spent, "remaining": total_allowance - total_spent},
         period="month",
+        labels=labels,
+        username=session.get("username"),
     )
     buffer = build_monthly_pdf(year, month, weeks, cat_totals, insights, labels=labels)
     return pdf_response(buffer, f"{year}_{month}.pdf")
@@ -1436,6 +1575,7 @@ def export_yearly_pdf():
 
     summary = db.get_yearly_summary(user_id, year)
     cat_totals = summary["breakdown"]
+    labels = db.category_labels_for_user(user_id)
     insights = generate_budget_insights(
         summary["total_allowance"],
         {
@@ -1444,8 +1584,9 @@ def export_yearly_pdf():
             "remaining": summary["total_saved"],
         },
         period="year",
+        labels=labels,
+        username=session.get("username"),
     )
-    labels = db.category_labels_for_user(user_id)
     buffer = build_yearly_pdf(year, summary["month_rows"], cat_totals, insights, labels=labels)
     return pdf_response(buffer, f"budget-{year}.pdf")
 
@@ -1470,6 +1611,7 @@ def export_range_pdf():
     end_date = end_inclusive + timedelta(days=1)
     label = f"{start_date.strftime('%b %d, %Y')} to {end_inclusive.strftime('%b %d, %Y')}"
     report = db.build_period_report(user_id, start_date, end_date, label=label)
+    labels = db.category_labels_for_user(user_id)
     insights = generate_budget_insights(
         report["total_allowance"],
         {
@@ -1478,8 +1620,9 @@ def export_range_pdf():
             "remaining": report["total_saved"],
         },
         period="range",
+        labels=labels,
+        username=session.get("username"),
     )
-    labels = db.category_labels_for_user(user_id)
     buffer = build_range_pdf(
         label, report["raw_weeks"], report["breakdown"], insights, labels=labels,
     )

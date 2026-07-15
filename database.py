@@ -207,7 +207,6 @@ def init_db():
     from migrations.runner import run_migrations
 
     run_migrations()
-    print("Database Initialized.")
     warmup_pool()
 
 
@@ -1892,5 +1891,122 @@ def delete_savings_goal(goal_id, user_id):
         cursor.execute(
             "DELETE FROM savings_goals WHERE id = %s AND user_id = %s",
             (goal_id, user_id),
+        )
+        return cursor.rowcount > 0
+
+
+MAX_INCOME_SOURCE_LABEL = 40
+MAX_INCOME_SOURCES = 12
+
+
+def serialize_income_source(row):
+    return {
+        "id": row["id"],
+        "label": row["label"],
+        "amount": as_float(row["amount"]),
+        "active": bool(row["active"]),
+        "sort_order": int(row["sort_order"] or 0),
+    }
+
+
+def get_user_income_sources(user_id):
+    with db_cursor(dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT id, label, amount, active, sort_order "
+            "FROM user_income_sources WHERE user_id = %s "
+            "ORDER BY sort_order ASC, id ASC",
+            (user_id,),
+        )
+        return [serialize_income_source(dict(row)) for row in cursor.fetchall()]
+
+
+def income_sources_total(sources=None, user_id=None, active_only=True):
+    items = sources if sources is not None else get_user_income_sources(user_id)
+    total = 0.0
+    for item in items:
+        if active_only and not item.get("active"):
+            continue
+        total += as_float(item.get("amount"))
+    return round(total, 2)
+
+
+def create_user_income_source(user_id, label, amount):
+    label = (label or "").strip()
+    if not label:
+        raise ValueError("Name is required.")
+    if len(label) > MAX_INCOME_SOURCE_LABEL:
+        raise ValueError(f"Name must be at most {MAX_INCOME_SOURCE_LABEL} characters.")
+    amount = as_float(amount)
+    if amount <= 0:
+        raise ValueError("Amount must be greater than 0.")
+
+    with db_cursor(commit=True, dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT COUNT(*) AS count FROM user_income_sources WHERE user_id = %s",
+            (user_id,),
+        )
+        count = int(cursor.fetchone()["count"])
+        if count >= MAX_INCOME_SOURCES:
+            raise ValueError(f"You can add at most {MAX_INCOME_SOURCES} income sources.")
+
+        cursor.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order "
+            "FROM user_income_sources WHERE user_id = %s",
+            (user_id,),
+        )
+        sort_order = int(cursor.fetchone()["next_order"])
+        cursor.execute(
+            "INSERT INTO user_income_sources (user_id, label, amount, sort_order) "
+            "VALUES (%s, %s, %s, %s) "
+            "RETURNING id, label, amount, active, sort_order",
+            (user_id, label, amount, sort_order),
+        )
+        return serialize_income_source(dict(cursor.fetchone()))
+
+
+def update_user_income_source(source_id, user_id, **fields):
+    updates = []
+    params = []
+    if "label" in fields:
+        label = (fields["label"] or "").strip()
+        if not label:
+            raise ValueError("Name is required.")
+        if len(label) > MAX_INCOME_SOURCE_LABEL:
+            raise ValueError(f"Name must be at most {MAX_INCOME_SOURCE_LABEL} characters.")
+        updates.append("label = %s")
+        params.append(label)
+    if "amount" in fields:
+        amount = as_float(fields["amount"])
+        if amount <= 0:
+            raise ValueError("Amount must be greater than 0.")
+        updates.append("amount = %s")
+        params.append(amount)
+    if "active" in fields:
+        updates.append("active = %s")
+        params.append(bool(fields["active"]))
+    if "sort_order" in fields and fields["sort_order"] is not None:
+        updates.append("sort_order = %s")
+        params.append(int(fields["sort_order"]))
+
+    if not updates:
+        return None
+    updates.append("updated_at = CURRENT_TIMESTAMP")
+    params.extend([source_id, user_id])
+    with db_cursor(commit=True, dict_cursor=True) as cursor:
+        cursor.execute(
+            f"UPDATE user_income_sources SET {', '.join(updates)} "
+            f"WHERE id = %s AND user_id = %s "
+            f"RETURNING id, label, amount, active, sort_order",
+            params,
+        )
+        row = cursor.fetchone()
+        return serialize_income_source(dict(row)) if row else None
+
+
+def delete_user_income_source(source_id, user_id):
+    with db_cursor(commit=True) as cursor:
+        cursor.execute(
+            "DELETE FROM user_income_sources WHERE id = %s AND user_id = %s",
+            (source_id, user_id),
         )
         return cursor.rowcount > 0

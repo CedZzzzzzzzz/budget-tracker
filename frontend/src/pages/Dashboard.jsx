@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate, useOutletContext } from 'react-router-dom';
+import { Link, useNavigate, useOutletContext } from 'react-router-dom';
 import { apiFetch, openPdf, primeCsrf, downloadCsv, runExport } from '../api';
 import { applyMutationPatch, applyDashboardData, patchComparisonFromTotals, patchAllowance } from '../utils/budgetPatch';
 import { CategoryDonutChart, WeekComparisonChart, SpendingByDayChart } from '../components/BudgetCharts';
@@ -83,10 +83,30 @@ function IconButton({ onClick, label, danger, className = '', children }) {
   );
 }
 
-function EditableAllowanceRow({ allowance, onSave }) {
+function EditableAllowanceRow({ allowance, onSave, onApplyIncome }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState('');
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [sources, setSources] = useState([]);
+  const [incomeTotal, setIncomeTotal] = useState(0);
+
+  const loadSources = useCallback(() => {
+    apiFetch('/api/income-sources')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        const list = Array.isArray(d.income_sources) ? d.income_sources : [];
+        const active = list.filter((s) => s.active);
+        setSources(active);
+        setIncomeTotal(Number(d.income_total) || active.reduce((s, item) => s + Number(item.amount || 0), 0));
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadSources();
+  }, [loadSources]);
 
   const start = () => {
     setVal(String(allowance));
@@ -97,22 +117,35 @@ function EditableAllowanceRow({ allowance, onSave }) {
 
   const save = async () => {
     const n = parseFloat(val);
-    if (!n || n <= 0) return alert('Enter a valid allowance');
+    if (!n || n <= 0) return alert('Enter a valid weekly total');
     setSaving(true);
     try {
       await onSave(n);
       setEditing(false);
     } catch {
-      alert('Failed to update allowance');
+      alert('Failed to update weekly total');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const syncFromSources = async () => {
+    if (!onApplyIncome) return;
+    setSyncing(true);
+    try {
+      await onApplyIncome();
+      loadSources();
+    } catch (err) {
+      alert(err?.message || 'No income sources to apply');
+    } finally {
+      setSyncing(false);
     }
   };
 
   if (editing) {
     return (
       <div className={`${cardInner} space-y-2 px-4 py-3`}>
-        <label className={statLabel}>Weekly allowance</label>
+        <label className={statLabel}>Weekly total</label>
         <div className="flex flex-wrap gap-2">
           <input
             type="number"
@@ -130,25 +163,70 @@ function EditableAllowanceRow({ allowance, onSave }) {
             Cancel
           </button>
         </div>
-        <p className="text-[10px] text-purple-muted">Update if you receive extra allowance mid-week</p>
+        <p className="text-[10px] text-purple-muted">
+          Mid-week override OK. Manage named sources on{' '}
+          <Link to="/budget" className="text-purple-soft underline-offset-2 hover:underline">Budget</Link>.
+        </p>
       </div>
     );
   }
 
   return (
-    <div className={`${cardInner} flex items-center justify-between px-4 py-3`}>
-      <span className={statLabel}>Allowance</span>
-      <div className="flex items-center gap-2">
-        <span className="text-sm font-semibold text-purple-primary-light">₱{allowance.toFixed(2)}</span>
-        <button
-          type="button"
-          className="inline-flex text-purple-muted transition hover:text-purple-primary-light"
-          onClick={start}
-          aria-label="Edit allowance"
-          title="Edit allowance"
+    <div className={`${cardInner} space-y-2 px-4 py-3`}>
+      <div className="flex items-center justify-between">
+        <span className={statLabel}>Weekly total</span>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-purple-primary-light">₱{allowance.toFixed(2)}</span>
+          <button
+            type="button"
+            className="inline-flex text-purple-muted transition hover:text-purple-primary-light"
+            onClick={start}
+            aria-label="Edit weekly total"
+            title="Edit weekly total"
+          >
+            <EditIcon />
+          </button>
+        </div>
+      </div>
+
+      {sources.length > 0 ? (
+        <ul className="space-y-1 border-t border-purple-primary/10 pt-2">
+          {sources.map((s) => (
+            <li key={s.id} className="flex items-center justify-between gap-2 text-[11px]">
+              <span className="truncate text-purple-muted">{s.label}</span>
+              <span className="shrink-0 text-purple-text-dim">₱{Number(s.amount).toFixed(2)}</span>
+            </li>
+          ))}
+          {Math.abs(incomeTotal - allowance) > 0.009 && (
+            <li className="text-[10px] text-amber-300/90">
+              Sources total ₱{incomeTotal.toFixed(2)} — not applied to this week yet
+            </li>
+          )}
+        </ul>
+      ) : (
+        <p className="text-[10px] text-purple-muted">
+          No income sources yet.{' '}
+          <Link to="/budget" className="text-purple-soft underline-offset-2 hover:underline">Add them on Budget</Link>
+        </p>
+      )}
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {onApplyIncome && sources.length > 0 && (
+          <button
+            type="button"
+            disabled={syncing}
+            onClick={syncFromSources}
+            className="text-left text-[10px] font-medium text-purple-soft transition hover:text-purple-text disabled:opacity-50"
+          >
+            {syncing ? 'Updating…' : 'Refresh from sources'}
+          </button>
+        )}
+        <Link
+          to="/budget"
+          className="text-[10px] font-medium text-purple-muted underline-offset-2 transition hover:text-purple-soft hover:underline"
         >
-          <EditIcon />
-        </button>
+          Manage on Budget
+        </Link>
       </div>
     </div>
   );
@@ -157,10 +235,29 @@ function EditableAllowanceRow({ allowance, onSave }) {
 function SetupScreen({ weekInfo, onStart }) {
   const [val, setVal] = useState('');
   const [loading, setLoading] = useState(false);
+  const [sources, setSources] = useState([]);
+  const [incomeTotal, setIncomeTotal] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch('/api/income-sources')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d) return;
+        const list = Array.isArray(d.income_sources) ? d.income_sources : [];
+        const active = list.filter((s) => s.active);
+        const total = Number(d.income_total) || active.reduce((s, item) => s + Number(item.amount || 0), 0);
+        setSources(active);
+        setIncomeTotal(total);
+        if (total > 0) setVal(String(total));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   const start = async () => {
     const n = parseFloat(val);
-    if (!n || n <= 0) return alert('Enter valid allowance');
+    if (!n || n <= 0) return alert('Enter a valid weekly total');
     setLoading(true);
     try {
       const r = await apiFetch('/api/set-allowance', {
@@ -189,7 +286,23 @@ function SetupScreen({ weekInfo, onStart }) {
         )}
         <p className="mb-6 text-xs text-purple-muted">Week starts Sunday</p>
         <div className="text-left">
-          <label htmlFor="allowanceInput" className={label}>Weekly allowance</label>
+          {sources.length > 0 && (
+            <div className={`${cardInner} mb-4 space-y-2 p-3.5`}>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-purple-muted">From income sources</p>
+              <ul className="space-y-1.5">
+                {sources.map((s) => (
+                  <li key={s.id} className="flex items-center justify-between gap-2 text-sm">
+                    <span className="truncate text-purple-text-dim">{s.label}</span>
+                    <span className="shrink-0 font-medium text-purple-primary-light">₱{Number(s.amount).toFixed(2)}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="border-t border-purple-primary/10 pt-2 text-right text-sm font-semibold text-purple-text">
+                Total ₱{incomeTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </p>
+            </div>
+          )}
+          <label htmlFor="allowanceInput" className={label}>Weekly total</label>
           <input
             type="number"
             id="allowanceInput"
@@ -201,6 +314,10 @@ function SetupScreen({ weekInfo, onStart }) {
             onChange={(e) => setVal(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && start()}
           />
+          <p className="mt-2 text-xs text-purple-muted">
+            Edit sources anytime on{' '}
+            <Link to="/budget" className="text-purple-soft underline-offset-2 hover:underline">Budget</Link>.
+          </p>
           <button type="button" className={`${btnPrimary} mt-4 w-full`} onClick={start} disabled={loading}>
             {loading ? 'Starting…' : 'Begin tracking'}
           </button>
@@ -270,6 +387,122 @@ function SectionTitle({ children, right, className = '' }) {
       </div>
       {right}
     </div>
+  );
+}
+
+function AiInsightsToast() {
+  const [insights, setInsights] = useState([]);
+  const [index, setIndex] = useState(0);
+  const [visible, setVisible] = useState(false);
+  const [entered, setEntered] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (sessionStorage.getItem('insights_shown') === '1') {
+        setLoading(false);
+        setVisible(false);
+        return;
+      }
+      setLoading(true);
+      setEntered(false);
+      try {
+        const r = await apiFetch('/api/insights');
+        if (!r.ok) throw new Error('insights failed');
+        const d = await r.json();
+        if (cancelled) return;
+        if (d.served) {
+          sessionStorage.setItem('insights_shown', '1');
+          setInsights([]);
+          setVisible(false);
+          return;
+        }
+        const lines = Array.isArray(d.insights) ? d.insights.filter(Boolean).slice(0, 3) : [];
+        sessionStorage.setItem('insights_shown', '1');
+        setInsights(lines);
+        setIndex(0);
+        setVisible(lines.length > 0);
+      } catch {
+        if (!cancelled) {
+          setInsights([]);
+          setVisible(false);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!visible) {
+      setEntered(false);
+      return undefined;
+    }
+    const frame = requestAnimationFrame(() => setEntered(true));
+    return () => cancelAnimationFrame(frame);
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible || !insights.length) return undefined;
+    const tipMs = 4500;
+    const timer = setTimeout(() => {
+      if (index >= insights.length - 1) {
+        setVisible(false);
+      } else {
+        setIndex((i) => i + 1);
+      }
+    }, tipMs);
+    return () => clearTimeout(timer);
+  }, [visible, insights, index]);
+
+  if (loading || !visible || !insights.length) return null;
+
+  const line = insights[index] || insights[0];
+
+  return createPortal(
+    <div
+      className={`insight-popup-notif pointer-events-auto fixed right-4 top-4 z-[2050] w-[min(calc(100vw-2rem),22rem)] sm:right-5 sm:top-5 ${
+        entered ? 'insight-popup-notif--in' : ''
+      }`}
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-[11px] font-medium text-purple-muted">Tip</p>
+            <button
+              type="button"
+              className="shrink-0 rounded-md px-1 text-sm leading-none text-purple-muted transition hover:bg-purple-primary/15 hover:text-purple-text"
+              onClick={() => setVisible(false)}
+              aria-label="Dismiss notification"
+            >
+              ✕
+            </button>
+          </div>
+          <p key={index} className="insight-popup-notif__body mt-1 text-[13px] leading-snug text-purple-text">
+            {line}
+          </p>
+          {insights.length > 1 && (
+            <div className="mt-2 flex items-center gap-1.5">
+              {insights.map((_, i) => (
+                <span
+                  key={i}
+                  className={`h-1 rounded-full transition-all ${
+                    i === index ? 'w-3 bg-purple-primary-light' : 'w-1 bg-purple-primary/35'
+                  }`}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="insight-popup-notif__progress" key={index} />
+    </div>,
+    document.body,
   );
 }
 
@@ -371,7 +604,7 @@ function CategoryLimitRow({ category, spent, status }) {
 
 function WeeklyTracker({
   weekInfo, allowance, expenses, totals, comparison, categoryStatus, categoryRules,
-  onBudgetPatch, onAllowanceChange, onItemDeleted,
+  onBudgetPatch, onAllowanceChange, onApplyIncome, onItemDeleted,
 }) {
   const { categories, labels } = useCategories();
   const today = new Date().getDay();
@@ -706,10 +939,16 @@ function WeeklyTracker({
 
       <CategoryLimitAlerts categoryStatus={categoryStatus} />
 
+      <AiInsightsToast />
+
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         <div className={`${card} p-5`}>
           <SectionTitle className="mb-4">Overview</SectionTitle>
-          <EditableAllowanceRow allowance={allowance} onSave={onAllowanceChange} />
+          <EditableAllowanceRow
+            allowance={allowance}
+            onSave={onAllowanceChange}
+            onApplyIncome={onApplyIncome}
+          />
           <div className="my-4 flex flex-col items-center glass-well py-5">
             <RingProgress value={pct} />
           </div>
@@ -1580,6 +1819,16 @@ export default function Dashboard({ monthly = false }) {
     setComparison(patch.comparison);
   }, [categories, comparison, expenses, totals]);
 
+  const handleApplyIncome = useCallback(async () => {
+    const r = await apiFetch('/api/income-sources/apply', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'Could not apply income sources');
+    const patch = patchAllowance(d.allowance, d.totals || totals, expenses, comparison, categories);
+    setAllowance(patch.allowance);
+    setTotals(patch.totals);
+    setComparison(patch.comparison);
+  }, [categories, comparison, expenses, totals]);
+
   const handleItemDeleted = useCallback((item) => {
     setUndoItem(item);
   }, []);
@@ -1645,6 +1894,7 @@ export default function Dashboard({ monthly = false }) {
                 categoryRules={categoryRules}
                 onBudgetPatch={handleBudgetPatch}
                 onAllowanceChange={handleAllowanceChange}
+                onApplyIncome={handleApplyIncome}
                 onItemDeleted={handleItemDeleted}
               />
             )

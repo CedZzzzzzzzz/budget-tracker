@@ -110,6 +110,9 @@ Create `.env` file:
 DATABASE_URL=postgresql://postgres:your_password@localhost:5000/budget_tracker
 FLASK_ENV=development
 SECRET_KEY=your-secret-key-here
+# Optional — in-app + PDF AI insights (tries primary, then secondary)
+GEMINI_AI_INSIGHT_API_KEY=your-gemini-key
+GEMINI_AI_INSIGHT_API_KEY_SECONDARY=your-second-gemini-key
 ```
 
 **5. Run the application**
