@@ -12,6 +12,7 @@ import {
   categorizeItem,
   categoryLabel,
 } from '../utils/categorize';
+import { expensePhrase } from '../utils/expensePhrase';
 import {
   card, cardInner, input, label, btnPrimary,
   heading, subtext, statLabel,
@@ -613,6 +614,8 @@ function WeeklyTracker({
   const [itemAmount, setItemAmount] = useState('');
   const [itemNotes, setItemNotes] = useState('');
   const [itemTags, setItemTags] = useState('');
+  const [quickPhrase, setQuickPhrase] = useState('');
+  const [quickError, setQuickError] = useState('');
   const [category, setCategory] = useState('other');
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -724,6 +727,24 @@ function WeeklyTracker({
 
   const dayItems = selDay && expenses[selDay]?.items ? expenses[selDay].items : [];
   const dayTotals = selDay && expenses[selDay] ? expenses[selDay] : { fare: 0, food: 0, other: 0, total: 0 };
+
+  const submitQuickPhrase = () => {
+    setQuickError('');
+    const parsed = expensePhrase(quickPhrase, {
+      weekDays: DAYS,
+      todayName: DAYS[today],
+    });
+
+    if (!parsed) {
+      setQuickError("Couldn't parse that.");
+      return;
+    }
+
+    if (parsed.day) setSelDay(parsed.day);
+    setItemName(parsed.name);
+    setItemAmount(String(parsed.amount));
+    setQuickPhrase('');
+  };
 
   const addItem = async () => {
     if (!selDay) return;
@@ -1029,6 +1050,28 @@ function WeeklyTracker({
                 Adding for <span className="font-medium text-purple-primary-light">{selDay}</span>
                 <span className="ml-2 text-purple-muted/70">Press <kbd className="rounded border border-purple-primary/20 px-1 font-mono text-[10px]">N</kbd> to focus</span>
               </p>
+              <div className="space-y-1">
+                <label className={label}>Quick add</label>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
+                  <input
+                    type="text"
+                    className={input}
+                    placeholder="spent 120 on jeepney today"
+                    value={quickPhrase}
+                    onChange={(e) => {
+                      setQuickPhrase(e.target.value);
+                      if (quickError) setQuickError('');
+                    }}
+                    onKeyDown={(e) => e.key === 'Enter' && submitQuickPhrase()}
+                  />
+                  <button type="button" className={`${btnPrimary} w-full sm:w-auto`} onClick={submitQuickPhrase}>
+                    Parse
+                  </button>
+                </div>
+                {quickError && (
+                  <p className="text-xs text-red-400">{quickError}</p>
+                )}
+              </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_110px_auto]">
                 <div>
                   <label className={label}>Item</label>
