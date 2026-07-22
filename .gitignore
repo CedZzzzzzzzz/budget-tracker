@@ -34,9 +34,7 @@ frontend/dist/
 
 # Documents
 /docs
-optimization.md
-features.md
-features2.md
+/docs_feat
 
 # agent
 .agents/

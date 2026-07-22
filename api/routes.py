@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, session, Response
+from flask import Blueprint, request, jsonify, session, Response, send_file
 from datetime import datetime, timedelta
 import csv
 import database as db
@@ -7,15 +7,20 @@ from functools import wraps
 import logging
 import os
 import secrets
+import time
 from api.categorize import categorize_item, CATEGORY_LABELS, CATEGORIES
 from api.security import issue_csrf_token, verify_request_origin
 from api.email_service import (
     mail_configured,
+    send_email_verification,
+    send_email_verification_background,
     send_password_reset_email,
     send_password_reset_email_background,
 )
 from api.errors import handle_api_errors, internal_error
 from api.insights import build_insights, generate_budget_insights
+from api.anomalies import HISTORY_WINDOW_DAYS, build_anomaly_report
+from api.account_export import build_account_export
 from api.pdf_report import build_monthly_pdf, build_yearly_pdf, build_range_pdf, pdf_response
 from extensions import limiter
 
@@ -25,7 +30,9 @@ api = Blueprint("api", __name__, url_prefix="/api")
 
 CSRF_EXEMPT_ENDPOINTS = frozenset({
     "api.forgot_password",
+    "api.resend_verification",
     "api.reset_password",
+    "api.verify_email",
 })
 
 
@@ -56,6 +63,9 @@ MAX_ITEM_NOTES_LEN = db.MAX_ITEM_NOTES_LEN
 MAX_TAG_LEN = db.MAX_TAG_LEN
 MAX_TAGS_PER_ITEM = db.MAX_TAGS_PER_ITEM
 MAX_PASSWORD_LEN = 128
+ACCOUNT_EXPORT_LIMIT = "3 per hour"
+ACCOUNT_DELETION_LIMIT = "3 per day"
+MAX_VERIFICATION_TOKEN_LEN = 256
 
 
 def parse_item_notes_tags(data):
@@ -88,7 +98,16 @@ def validate_password(password):
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if "user_id" not in session:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Authentication required"}), 401
+        try:
+            exists = db.user_exists(user_id)
+        except Exception as error:
+            logger.exception("Authentication lookup failed: %s", error)
+            return internal_error()
+        if not exists:
+            session.clear()
             return jsonify({"error": "Authentication required"}), 401
         return f(*args, **kwargs)
     return decorated
@@ -243,10 +262,28 @@ RESET_PASSWORD_LIMIT = (
 CHANGE_PASSWORD_LIMIT = (
     "30 per hour" if os.environ.get("FLASK_ENV", "development") != "production" else "10 per hour"
 )
+VERIFY_EMAIL_LIMIT = (
+    "60 per hour" if os.environ.get("FLASK_ENV", "development") != "production" else "20 per hour"
+)
+RESEND_VERIFICATION_LIMIT = (
+    "10 per hour" if os.environ.get("FLASK_ENV", "development") != "production" else "5 per hour"
+)
+VERIFICATION_SENT_MESSAGE = (
+    "A verification link has been sent."
+)
 
 
 def app_base_url():
     return os.environ.get("APP_BASE_URL", "http://localhost:5173").rstrip("/")
+
+
+def deliver_verification_email(user_id, email):
+    raw_token = db.create_email_verification_token(user_id)
+    verification_url = f"{app_base_url()}/verify-email?token={raw_token}"
+    if mail_configured():
+        send_email_verification_background(email, verification_url)
+        return True
+    return send_email_verification(email, verification_url)
 
 
 @api.route("/csrf-token", methods=["GET"])
@@ -303,6 +340,40 @@ def reset_password():
     return jsonify({"success": True, "message": "Password updated. You can sign in now."})
 
 
+@api.route("/verify-email", methods=["POST"])
+@limiter.limit(VERIFY_EMAIL_LIMIT)
+@handle_api_errors
+def verify_email():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Verification token is required."}), 400
+    raw_token = data.get("token") or ""
+    if not isinstance(raw_token, str) or not raw_token or len(raw_token) > MAX_VERIFICATION_TOKEN_LEN:
+        return jsonify({"error": "Invalid or expired verification link."}), 400
+
+    status = db.consume_email_verification_token(raw_token)
+    if status != "verified":
+        return jsonify({"error": "Invalid or expired verification link."}), 400
+    return jsonify({"success": True, "message": "Email verified. You can sign in now."})
+
+
+@api.route("/resend-verification", methods=["POST"])
+@limiter.limit(RESEND_VERIFICATION_LIMIT)
+@handle_api_errors
+def resend_verification():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid email address."}), 400
+    email = (data.get("email") or "").strip().lower()
+    if not email or "@" not in email or len(email) > MAX_EMAIL_LEN:
+        return jsonify({"error": "Invalid email address."}), 400
+
+    user = db.get_user_by_email(email)
+    if user and not user.get("email_verified_at"):
+        deliver_verification_email(user["id"], user["email"])
+    return jsonify({"success": True, "message": VERIFICATION_SENT_MESSAGE})
+
+
 @api.route("/register", methods=["POST"])
 @limiter.limit("5 per hour")
 @handle_api_errors
@@ -332,7 +403,8 @@ def register():
 
     user_id = db.create_user(username, email, password)
     if user_id:
-        if not db.get_user_by_email(email):
+        user = db.get_user_by_email(email)
+        if not user:
             logger.error(
                 "register: user_id=%s was returned but email %s not found in database",
                 user_id,
@@ -340,14 +412,13 @@ def register():
             )
             return jsonify({"error": "Registration failed"}), 500
         session.clear()
-        session.permanent = False
-        session["user_id"] = user_id
-        session["username"] = username
-        session["insights_served"] = False
+        deliver_verification_email(user_id, user["email"])
         return jsonify({
             "success": True,
             "username": username,
-            "onboarding_completed": False,
+            "email": user["email"],
+            "verification_required": True,
+            "message": "Check your email to verify your account.",
         })
     return jsonify({"error": "Registration failed"}), 500
 
@@ -370,6 +441,13 @@ def login():
         return jsonify({"error": "Username does not exist"}), 401
     if not db.verify_password(user, password):
         return jsonify({"error": "Incorrect password"}), 401
+    if not user.get("email_verified_at"):
+        session.clear()
+        return jsonify({
+            "error": "Verify your email before signing in.",
+            "verification_required": True,
+            "email": user["email"],
+        }), 403
 
     session.clear()
     session.permanent = remember
@@ -395,6 +473,9 @@ def check_auth():
     if "user_id" not in session:
         return jsonify({"authenticated": False})
     user_id = session.get("user_id")
+    if not db.user_exists(user_id):
+        session.clear()
+        return jsonify({"authenticated": False})
     return jsonify({
         "authenticated": True,
         "username": session.get("username"),
@@ -477,11 +558,29 @@ def update_profile():
     else:
         email = user["email"]
 
+    email_changed = db.normalize_email(email) != db.normalize_email(user["email"])
+
     if username == user["username"] and db.normalize_email(email) == db.normalize_email(user["email"]):
         return jsonify({"success": True, "username": username, "email": email})
 
-    if not db.update_user_profile(user_id, username=username, email=email):
+    if not db.update_user_profile(
+        user_id,
+        username=username,
+        email=email,
+        reset_email_verification=email_changed,
+    ):
         return jsonify({"error": "Username or email is already in use."}), 400
+
+    if email_changed:
+        session.clear()
+        deliver_verification_email(user_id, email)
+        return jsonify({
+            "success": True,
+            "username": username,
+            "email": email,
+            "verification_required": True,
+            "message": "Verify your new email before signing in again.",
+        })
 
     session["username"] = username
     return jsonify({"success": True, "username": username, "email": email})
@@ -519,6 +618,39 @@ def change_password():
 
     db.invalidate_password_reset_tokens(user_id)
     return jsonify({"success": True, "message": "Password updated."})
+
+
+@api.route("/account", methods=["DELETE"])
+@login_required
+@limiter.limit(ACCOUNT_DELETION_LIMIT)
+@handle_api_errors
+def delete_account():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Current password and confirmation are required."}), 400
+
+    current_password = data.get("current_password") or ""
+    confirmation = data.get("confirmation") or ""
+    if not isinstance(current_password, str) or not isinstance(confirmation, str):
+        return jsonify({"error": "Current password and confirmation are required."}), 400
+    if not current_password or not confirmation:
+        return jsonify({"error": "Current password and confirmation are required."}), 400
+    if len(current_password) > MAX_PASSWORD_LEN or len(confirmation) > MAX_USERNAME_LEN + 7:
+        return jsonify({"error": "Invalid account deletion details."}), 400
+
+    expected_confirmation = f"DELETE {session.get('username', '')}"
+    if confirmation.strip() != expected_confirmation:
+        return jsonify({"error": "Confirmation text does not match."}), 400
+
+    status = db.delete_user_account(get_user_id(), current_password)
+    if status == "invalid_password":
+        return jsonify({"error": "Current password is incorrect."}), 401
+    if status != "deleted":
+        session.clear()
+        return jsonify({"error": "Authentication required"}), 401
+
+    session.clear()
+    return jsonify({"success": True, "message": "Account deleted."})
 
 
 @api.route("/current-week-info", methods=["GET"])
@@ -606,6 +738,30 @@ def insights():
 
     session["insights_served"] = True
     return jsonify({**result, "period": "week", "served": False})
+
+
+@api.route("/spending-anomalies", methods=["GET"])
+@login_required
+@handle_api_errors
+def spending_anomalies():
+    started_at = time.perf_counter()
+    user_id = get_user_id()
+    week_start, week_end = get_week_range()
+    history_start = week_start - timedelta(days=HISTORY_WINDOW_DAYS)
+    rows = db.get_spending_anomaly_candidates(
+        user_id,
+        week_start,
+        week_end,
+        history_start,
+    )
+    report = build_anomaly_report(rows)
+    logger.info(
+        "Spending anomaly check completed history_samples=%s anomalies=%s elapsed_ms=%.1f",
+        report["sample_size"],
+        len(report["anomalies"]),
+        (time.perf_counter() - started_at) * 1000,
+    )
+    return jsonify({**report, "window_days": HISTORY_WINDOW_DAYS})
 
 
 @api.route("/set-allowance", methods=["POST"])
@@ -1389,6 +1545,32 @@ def monthly_summary():
         "weeks": weekly_data,
         "num_weeks": len(weekly_data),
     })
+
+
+@api.route("/account-export", methods=["GET"])
+@login_required
+@limiter.limit(ACCOUNT_EXPORT_LIMIT)
+@handle_api_errors
+def account_export():
+    started_at = time.perf_counter()
+    snapshot = db.get_account_export_snapshot(get_user_id())
+    archive, manifest = build_account_export(snapshot)
+    filename = f"budget-tracker-account-export-{datetime.now().date()}.zip"
+    response = send_file(
+        archive,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=filename,
+        max_age=0,
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.call_on_close(archive.close)
+    logger.info(
+        "Account export completed records=%s elapsed_ms=%.1f",
+        sum(file["records"] for file in manifest["files"]),
+        (time.perf_counter() - started_at) * 1000,
+    )
+    return response
 
 
 @api.route("/export-csv", methods=["GET"])

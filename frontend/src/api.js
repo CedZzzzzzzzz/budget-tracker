@@ -158,7 +158,7 @@ async function downloadResponse(res, fallbackName) {
   link.href = url;
   link.download = filename;
   link.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
 export async function openPdf(path) {
@@ -179,6 +179,11 @@ export async function openPdf(path) {
 export async function downloadCsv(path) {
   const res = await fetch(apiUrl(path), { credentials: 'include' });
   await downloadResponse(res, 'budget-export.csv');
+}
+
+export async function downloadAccountExport() {
+  const res = await fetch(apiUrl('/api/account-export'), { credentials: 'include' });
+  await downloadResponse(res, 'budget-tracker-account-export.zip');
 }
 
 export async function runExport(task) {

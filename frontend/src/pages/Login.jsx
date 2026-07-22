@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { apiFetch, primeCsrf, markLoginSession, checkAuth } from '../api';
 
 function Field({ label, type = 'text', value, onChange, onKeyDown, autoComplete, placeholder }) {
@@ -200,10 +200,14 @@ function RegisterForm({ onSubmit, loading, error }) {
 }
 
 export default function Login() {
+  const location = useLocation();
   const [mode, setMode] = useState('login');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
+  const [accountMessage] = useState(() => (
+    location.state?.accountDeleted ? 'Your account has been permanently deleted.' : ''
+  ));
   const navigate = useNavigate();
   const isLogin = mode === 'login';
 
@@ -211,7 +215,10 @@ export default function Login() {
     document.documentElement.setAttribute('data-theme', 'dark');
     if (!localStorage.getItem('darkMode')) localStorage.setItem('darkMode', 'true');
     primeCsrf();
-  }, []);
+    if (location.state?.accountDeleted) {
+      navigate('/', { replace: true, state: null });
+    }
+  }, [location.state, navigate]);
 
   useEffect(() => {
     let cancelled = false;
@@ -243,6 +250,10 @@ export default function Login() {
       if (res.ok) {
         markLoginSession(Boolean(rememberMe));
         navigate('/dashboard', { replace: true });
+      } else if (data.verification_required) {
+        navigate('/verify-email-sent', {
+          state: { email: data.email, message: data.error },
+        });
       } else setError(data.error || 'Login failed');
     } catch {
       setError('Connection error');
@@ -259,8 +270,10 @@ export default function Login() {
       const res = await apiFetch('/api/register', { method: 'POST', body: JSON.stringify({ username, email, password }) });
       const data = await res.json();
       if (res.ok) {
-        markLoginSession(false);
-        navigate('/dashboard', { replace: true });
+        navigate('/verify-email-sent', {
+          replace: true,
+          state: { email: data.email, message: data.message },
+        });
       } else setError(data.error || 'Registration failed');
     } catch {
       setError('Connection error');
@@ -284,7 +297,13 @@ export default function Login() {
 
   return (
     <div className="login-page flex min-h-[calc(100vh-32px)] items-center justify-center px-3 py-4">
-      <div className="login-modal-enter w-full max-w-[840px] overflow-hidden rounded-3xl border border-brand-glow/10 shadow-modal-lg">
+      <div className="w-full max-w-[840px]">
+        {accountMessage && (
+          <div className="mb-4 rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-center text-sm text-emerald-200">
+            {accountMessage}
+          </div>
+        )}
+        <div className="login-modal-enter overflow-hidden rounded-3xl border border-brand-glow/10 shadow-modal-lg">
         <div className="login-split relative hidden min-h-[480px] lg:block">
           <div className="grid h-full grid-cols-2">
             <FormShell edge="right">
@@ -320,6 +339,7 @@ export default function Login() {
           >
             {isLogin ? 'No account yet? Sign up' : 'Already have one? Sign in'}
           </button>
+        </div>
         </div>
       </div>
     </div>

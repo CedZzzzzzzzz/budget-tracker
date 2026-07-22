@@ -238,6 +238,15 @@ def get_user_by_id(user_id):
         return dict(user) if user else None
 
 
+def user_exists(user_id):
+    with db_cursor() as cursor:
+        cursor.execute(
+            "SELECT 1 FROM users WHERE id = %s AND email_verified_at IS NOT NULL",
+            (user_id,),
+        )
+        return cursor.fetchone() is not None
+
+
 def get_user_by_username(username):
     with db_cursor(dict_cursor=True) as cursor:
         cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
@@ -297,8 +306,92 @@ def verify_password(user, password):
     return check_password_hash(user["password_hash"], password)
 
 
+def delete_user_account(user_id, password):
+    conn = db_connect()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute(
+            "SELECT id, password_hash FROM users WHERE id = %s FOR UPDATE",
+            (user_id,),
+        )
+        user = cursor.fetchone()
+        if not user:
+            conn.rollback()
+            return "not_found"
+        if not check_password_hash(user["password_hash"], password):
+            conn.rollback()
+            return "invalid_password"
+
+        cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return "not_found"
+
+        conn.commit()
+        return "deleted"
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        release_connection(conn)
+
+
 def hash_reset_token(raw_token):
     return hashlib.sha256(raw_token.encode()).hexdigest()
+
+
+def hash_email_verification_token(raw_token):
+    return hashlib.sha256(raw_token.encode()).hexdigest()
+
+
+def create_email_verification_token(user_id):
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hash_email_verification_token(raw_token)
+    expires_at = datetime.utcnow() + timedelta(hours=24)
+    with db_transaction() as cursor:
+        cursor.execute(
+            "UPDATE email_verification_tokens SET used_at = CURRENT_TIMESTAMP "
+            "WHERE user_id = %s AND used_at IS NULL",
+            (user_id,),
+        )
+        cursor.execute(
+            "INSERT INTO email_verification_tokens (user_id, token_hash, expires_at) "
+            "VALUES (%s, %s, %s)",
+            (user_id, token_hash, expires_at),
+        )
+    return raw_token
+
+
+def consume_email_verification_token(raw_token):
+    token_hash = hash_email_verification_token(raw_token)
+    with db_transaction(dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT tokens.id, tokens.user_id, tokens.used_at, "
+            "tokens.expires_at > CURRENT_TIMESTAMP AS active, users.email_verified_at "
+            "FROM email_verification_tokens AS tokens "
+            "JOIN users ON users.id = tokens.user_id "
+            "WHERE tokens.token_hash = %s FOR UPDATE OF tokens, users",
+            (token_hash,),
+        )
+        token = cursor.fetchone()
+        if not token:
+            return "invalid"
+        if token["email_verified_at"]:
+            return "verified"
+        if token["used_at"] or not token["active"]:
+            return "invalid"
+
+        cursor.execute(
+            "UPDATE users SET email_verified_at = CURRENT_TIMESTAMP WHERE id = %s",
+            (token["user_id"],),
+        )
+        cursor.execute(
+            "UPDATE email_verification_tokens SET used_at = CURRENT_TIMESTAMP "
+            "WHERE user_id = %s AND used_at IS NULL",
+            (token["user_id"],),
+        )
+        return "verified"
 
 
 def invalidate_password_reset_tokens(user_id):
@@ -352,7 +445,7 @@ def update_user_password(user_id, password):
         return cursor.rowcount > 0
 
 
-def update_user_profile(user_id, username=None, email=None):
+def update_user_profile(user_id, username=None, email=None, reset_email_verification=False):
     updates = []
     params = []
     if username is not None:
@@ -361,6 +454,8 @@ def update_user_profile(user_id, username=None, email=None):
     if email is not None:
         updates.append("email = %s")
         params.append(normalize_email(email))
+    if reset_email_verification:
+        updates.append("email_verified_at = NULL")
     if not updates:
         return True
     params.append(user_id)
@@ -405,7 +500,7 @@ def get_budget_by_week(user_id, week_start, week_end):
         return dict(budget) if budget else None
 
 
-def _serialize_user_category(row):
+def serialize_user_category(row):
     return {
         "id": row["id"],
         "slug": row["slug"],
@@ -422,7 +517,7 @@ def get_user_categories(user_id):
             "WHERE user_id = %s ORDER BY label ASC, id ASC",
             (user_id,),
         )
-        return [_serialize_user_category(dict(row)) for row in cursor.fetchall()]
+        return [serialize_user_category(dict(row)) for row in cursor.fetchall()]
 
 
 def get_user_category(category_id, user_id):
@@ -433,7 +528,7 @@ def get_user_category(category_id, user_id):
             (category_id, user_id),
         )
         row = cursor.fetchone()
-        return _serialize_user_category(dict(row)) if row else None
+        return serialize_user_category(dict(row)) if row else None
 
 
 def allowed_category_slugs(user_id):
@@ -505,7 +600,7 @@ def create_user_category(user_id, label, color=None, slug=None):
             "RETURNING id, slug, label, color, created_at",
             (user_id, candidate, label, color),
         )
-        return _serialize_user_category(dict(cursor.fetchone()))
+        return serialize_user_category(dict(cursor.fetchone()))
 
 
 def update_user_category(category_id, user_id, label=None, color=None):
@@ -538,7 +633,7 @@ def update_user_category(category_id, user_id, label=None, color=None):
             params,
         )
         row = cursor.fetchone()
-        return _serialize_user_category(dict(row)) if row else None
+        return serialize_user_category(dict(row)) if row else None
 
 
 def delete_user_category(category_id, user_id):
@@ -1338,6 +1433,106 @@ def fetch_export_rows(user_id, start_date, end_date):
         ]
 
 
+def get_account_export_snapshot(user_id):
+    with db_transaction(dict_cursor=True) as cursor:
+        cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        cursor.execute(
+            "SELECT username, email, created_at, onboarding_completed_at "
+            "FROM users WHERE id = %s",
+            (user_id,),
+        )
+        profile_row = cursor.fetchone()
+        profile = dict(profile_row) if profile_row else {}
+        if profile:
+            profile["onboarding_completed"] = bool(profile.pop("onboarding_completed_at", None))
+
+        cursor.execute(
+            "SELECT week_start_date, week_end_date, allowance, created_at "
+            "FROM budgets WHERE user_id = %s ORDER BY week_start_date",
+            (user_id,),
+        )
+        budgets = [dict(row) for row in cursor.fetchall()]
+
+        cursor.execute(
+            "SELECT e.expense_date, e.day, ei.name, ei.category, ei.amount, "
+            "ei.notes, ei.tags, ei.created_at "
+            "FROM expense_items ei "
+            "JOIN expenses e ON e.id = ei.expense_id "
+            "JOIN budgets b ON b.id = e.budget_id "
+            "WHERE b.user_id = %s ORDER BY e.expense_date, ei.created_at, ei.id",
+            (user_id,),
+        )
+        expense_items = [dict(row) for row in cursor.fetchall()]
+
+        cursor.execute(
+            "SELECT slug, label, color, created_at FROM user_categories "
+            "WHERE user_id = %s ORDER BY label, slug",
+            (user_id,),
+        )
+        custom_categories = [dict(row) for row in cursor.fetchall()]
+
+        cursor.execute(
+            "SELECT category, weekly_limit FROM category_budget_limits "
+            "WHERE user_id = %s ORDER BY category",
+            (user_id,),
+        )
+        category_limits = [dict(row) for row in cursor.fetchall()]
+
+        cursor.execute(
+            "SELECT name, amount, category, frequency, apply_day, apply_day_of_month, "
+            "active, created_at FROM recurring_expenses "
+            "WHERE user_id = %s ORDER BY created_at, name",
+            (user_id,),
+        )
+        recurring_expenses = [dict(row) for row in cursor.fetchall()]
+
+        cursor.execute(
+            "SELECT r.name AS recurring_name, a.period_key, a.applied_at, "
+            "ei.name AS expense_item_name, e.expense_date "
+            "FROM recurring_expense_applications a "
+            "JOIN recurring_expenses r ON r.id = a.recurring_id "
+            "LEFT JOIN expense_items ei ON ei.id = a.expense_item_id "
+            "LEFT JOIN expenses e ON e.id = ei.expense_id "
+            "WHERE r.user_id = %s ORDER BY a.applied_at, a.period_key",
+            (user_id,),
+        )
+        recurring_applications = [dict(row) for row in cursor.fetchall()]
+
+        cursor.execute(
+            "SELECT name, target_amount, current_amount, deadline, status, created_at, updated_at "
+            "FROM savings_goals WHERE user_id = %s ORDER BY created_at, name",
+            (user_id,),
+        )
+        savings_goals = [dict(row) for row in cursor.fetchall()]
+
+        cursor.execute(
+            "SELECT label, amount, active, sort_order, created_at, updated_at "
+            "FROM user_income_sources WHERE user_id = %s ORDER BY sort_order, label",
+            (user_id,),
+        )
+        income_sources = [dict(row) for row in cursor.fetchall()]
+
+        cursor.execute(
+            "SELECT pattern, category, hit_count, updated_at FROM user_category_rules "
+            "WHERE user_id = %s ORDER BY pattern, category",
+            (user_id,),
+        )
+        category_rules = [dict(row) for row in cursor.fetchall()]
+
+        return {
+            "profile": profile,
+            "budgets": budgets,
+            "expense_items": expense_items,
+            "custom_categories": custom_categories,
+            "category_limits": category_limits,
+            "recurring_expenses": recurring_expenses,
+            "recurring_applications": recurring_applications,
+            "savings_goals": savings_goals,
+            "income_sources": income_sources,
+            "category_rules": category_rules,
+        }
+
+
 def update_expense_item(item_id, user_id, name, amount, category, notes="", tags=None):
     notes = normalize_item_notes(notes)
     tags = normalize_item_tags(tags)
@@ -1458,6 +1653,27 @@ def get_user_category_rules(user_id):
             'WHERE user_id = %s ORDER BY hit_count DESC, updated_at DESC',
             (user_id,),
         )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_spending_anomaly_candidates(user_id, start_date, end_date, history_start):
+    with db_cursor(dict_cursor=True) as cursor:
+        cursor.execute('''
+            SELECT
+                ei.id AS item_id,
+                ei.name,
+                ei.amount,
+                ei.category,
+                e.expense_date,
+                (e.expense_date >= %s AND e.expense_date <= %s) AS is_current
+            FROM expense_items ei
+            JOIN expenses e ON e.id = ei.expense_id
+            JOIN budgets b ON b.id = e.budget_id
+            WHERE b.user_id = %s
+              AND e.expense_date >= %s
+              AND e.expense_date <= %s
+            ORDER BY e.expense_date, ei.id
+        ''', (start_date, end_date, user_id, history_start, end_date))
         return [dict(row) for row in cursor.fetchall()]
 
 
@@ -1744,7 +1960,7 @@ def process_recurring_expenses(user_id, week_start, week_end):
     return changed
 
 
-def _serialize_savings_goal(row):
+def serialize_savings_goal(row):
     target = as_float(row["target_amount"])
     current = as_float(row["current_amount"])
     progress = min((current / target) * 100, 100.0) if target > 0 else 0.0
@@ -1785,7 +2001,7 @@ def get_savings_goals(user_id, include_archived=False):
                 "created_at DESC",
                 (user_id,),
             )
-        return [_serialize_savings_goal(dict(row)) for row in cursor.fetchall()]
+        return [serialize_savings_goal(dict(row)) for row in cursor.fetchall()]
 
 
 def get_savings_goal(goal_id, user_id):
@@ -1797,7 +2013,7 @@ def get_savings_goal(goal_id, user_id):
             (goal_id, user_id),
         )
         row = cursor.fetchone()
-        return _serialize_savings_goal(dict(row)) if row else None
+        return serialize_savings_goal(dict(row)) if row else None
 
 
 def create_savings_goal(user_id, name, target_amount, current_amount=0, deadline=None):
@@ -1854,7 +2070,7 @@ def update_savings_goal(goal_id, user_id, **fields):
                     (new_status, goal_id, user_id),
                 )
                 goal = dict(cursor.fetchone())
-        return _serialize_savings_goal(goal)
+        return serialize_savings_goal(goal)
 
 
 def contribute_to_savings_goal(goal_id, user_id, amount):
@@ -1883,7 +2099,7 @@ def contribute_to_savings_goal(goal_id, user_id, amount):
             "created_at, updated_at",
             (new_current, new_status, goal_id, user_id),
         )
-        return _serialize_savings_goal(dict(cursor.fetchone()))
+        return serialize_savings_goal(dict(cursor.fetchone()))
 
 
 def delete_savings_goal(goal_id, user_id):

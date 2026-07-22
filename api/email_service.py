@@ -124,7 +124,7 @@ def send_via_brevo_api(to_email, subject, text_body, html_body):
         with urllib.request.urlopen(req, timeout=SMTP_TIMEOUT_SEC) as resp:
             if 200 <= resp.status < 300:
                 logger.info(
-                    "Password reset email sent to %s via Brevo API (from %s)",
+                    "Email sent to %s via Brevo API (from %s)",
                     to_email,
                     sender_email,
                 )
@@ -162,7 +162,7 @@ def send_via_smtp(to_email, subject, text_body, html_body):
             if user and password:
                 server.login(user, password)
             server.send_message(msg)
-        logger.info("Password reset email sent to %s via %s (from %s)", to_email, host, msg["From"])
+        logger.info("Email sent to %s via %s (from %s)", to_email, host, msg["From"])
         return True
     except smtplib.SMTPAuthenticationError as exc:
         code = exc.smtp_code if hasattr(exc, "smtp_code") else None
@@ -180,7 +180,7 @@ def send_via_smtp(to_email, subject, text_body, html_body):
             )
         return False
     except Exception:
-        logger.exception("Failed to send password reset email to %s via SMTP", to_email)
+        logger.exception("Failed to send email to %s via SMTP", to_email)
         return False
 
 
@@ -220,4 +220,42 @@ def send_password_reset_email_background(to_email, reset_url):
         args=(to_email, reset_url),
         daemon=True,
         name="password-reset-email",
+    ).start()
+
+
+def send_email_verification(to_email, verification_url):
+    subject = "Verify your Budget Tracker email"
+    text_body = (
+        "Verify your email address for Budget Tracker.\n\n"
+        f"Open this link within 24 hours:\n{verification_url}\n\n"
+        "If you did not create or update this account, you can ignore this email.\n"
+    )
+    html_body = (
+        "<p>Verify your email address for <strong>Budget Tracker</strong>.</p>"
+        f'<p><a href="{verification_url}">Verify email address</a> '
+        "(this link expires in 24 hours).</p>"
+        "<p>If you did not create or update this account, you can ignore this email.</p>"
+    )
+
+    if not mail_configured():
+        if os.environ.get("FLASK_ENV", "development") != "production":
+            logger.warning("Email verification link for local development:\n  %s", verification_url)
+            return True
+        logger.error("Email verification could not be sent because email is not configured")
+        return False
+
+    transport = preferred_email_transport()
+    if transport == "api" and brevo_api_key():
+        return send_via_brevo_api(to_email, subject, text_body, html_body)
+    if transport == "smtp":
+        return send_via_smtp(to_email, subject, text_body, html_body)
+    return False
+
+
+def send_email_verification_background(to_email, verification_url):
+    threading.Thread(
+        target=send_email_verification,
+        args=(to_email, verification_url),
+        daemon=True,
+        name="email-verification",
     ).start()

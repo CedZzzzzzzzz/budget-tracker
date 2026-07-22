@@ -114,7 +114,5 @@ window.addEventListener('DOMContentLoaded', async () => {
         if (data.authenticated) {
             window.location.href = '/dashboard';
         }
-    } catch {
-        /* stay on login */
-    }
+    } catch {}
 });

@@ -73,6 +73,8 @@ MIGRATIONS = [
     ("009_onboarding", lambda cursor: execute_sql_file(cursor, "008_onboarding.sql")),
     ("010_user_categories", lambda cursor: execute_sql_file(cursor, "009_user_categories.sql")),
     ("011_income_sources", lambda cursor: execute_sql_file(cursor, "010_income_sources.sql")),
+    ("012_account_deletion", lambda cursor: execute_sql_file(cursor, "011_account_deletion.sql")),
+    ("013_email_verification", lambda cursor: execute_sql_file(cursor, "012_email_verification.sql")),
 ]
 
 

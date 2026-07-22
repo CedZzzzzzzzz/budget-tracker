@@ -2,6 +2,89 @@
 
 All notable changes to Budget Tracker are documented in this file.
 
+## [0.1.14] - 2026-07-22
+
+### Documentation
+
+- Added production Brevo API configuration for verification email delivery.
+- Documented that Brevo IP authorization applies to the backend server, not registering
+  users, plus remediation for `525 Unauthorized IP address` failures.
+- Added sender verification, deployment, resend, URL, logging, and credential-rotation
+  guidance.
+
+## [0.1.13] - 2026-07-22
+
+### Added
+
+- **Email verification** — new registrations receive a 24-hour verification link and
+  remain signed out until the address is verified.
+- **Verification pages** — public pending, resend, success, invalid-link, and expired-link
+  states for desktop and mobile.
+- **Verification API** — rate-limited verification and generic resend endpoints with
+  origin validation and bounded inputs.
+- **Email-change verification** — changing an account email clears active sessions and
+  requires the new address to be verified.
+- **Email verification tests** — token lifecycle, migration, registration, login privacy,
+  resend, email changes, and session cleanup coverage.
+
+### Security
+
+- Verification tokens are generated securely, stored only as SHA-256 hashes, expire
+  after 24 hours, and are replaced on resend.
+- Unverified state is disclosed during login only after the password is correct.
+- Existing accounts are safely backfilled as verified during migration.
+
+### Performance
+
+- Token creation and consumption use short user-scoped transactions and indexed token
+  hashes without loading unrelated account data.
+
+## [0.1.12] - 2026-07-22
+
+### Added
+
+- **Self-service account deletion** — Settings danger zone with account-data download,
+  current-password verification, exact username confirmation, and an accessible
+  permanent-deletion modal.
+- **Account deletion API** — authenticated, CSRF-protected, rate-limited
+  `DELETE /api/account` with bounded input and minimal responses.
+- **Account deletion tests** — transaction, rollback, endpoint security, session cleanup,
+  stale-session rejection, and migration coverage.
+
+### Security
+
+- Account deletion locks and verifies the user inside the same transaction before one
+  user-row deletion triggers database cascades.
+- Authenticated routes reject and clear sessions whose user record no longer exists.
+
+### Performance
+
+- Budget and expense ownership now uses indexed `ON DELETE CASCADE` relationships, so
+  deletion requires no application-side account-data loading or row-by-row cleanup.
+
+## [0.1.11] - 2026-07-22
+
+### Added
+
+- **Full-account export** — Settings download for a versioned ZIP containing profile,
+  budgets, expenses, categories, limits, recurring expenses, goals, income sources, and
+  categorization rules, plus a human-readable PDF account summary.
+- **Private export endpoint** — authenticated, rate-limited `GET /api/account-export`
+  with no-store caching and a consistent read-only database snapshot.
+- **Account export tests** — archive contract, Unicode, CSV formula protection,
+  sensitive-field exclusion, user scoping, authentication, and response coverage.
+- **Spending anomaly detection** — deterministic median/MAD scoring against 90 days of
+  category history, exposed through `GET /api/spending-anomalies`.
+- **Dashboard anomaly alert** — header exclamation badge with an accessible, responsive
+  modal and a direct review action that opens the matching expense in the edit flow.
+- **Backend anomaly tests** — scoring edge cases, authentication, user scoping, and empty
+  history response coverage.
+
+### Performance
+
+- Anomaly history is loaded with one user-scoped joined query, category baselines are
+  calculated once, and responses are capped at three findings.
+
 ## [0.1.10] - 2026-07-11
 
 ### Summary

@@ -592,7 +592,110 @@ function CategoryLimitAlerts({ categoryStatus }) {
   );
 }
 
-function CategoryLimitRow({ category, spent, status }) {
+function AnomalyModal({ report, onClose, onReview }) {
+  const closeButtonRef = useRef(null);
+  const dialogRef = useRef(null);
+  const anomalies = Array.isArray(report?.anomalies) ? report.anomalies : [];
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = dialogRef.current?.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    document.body.style.overflow = 'hidden';
+    closeButtonRef.current?.focus();
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = '';
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[2100] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+      onClick={onClose}
+    >
+      <div
+        ref={dialogRef}
+        className={`${card} flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-b-none rounded-t-3xl sm:rounded-3xl`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="spending-anomalies-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-4 border-b border-purple-primary/10 px-5 py-4 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-amber-400/40 bg-amber-500/10 text-sm font-bold leading-none text-amber-200 light:border-amber-400 light:bg-amber-50 light:text-amber-800" aria-hidden="true">
+              !
+            </span>
+            <h2 id="spending-anomalies-title" className="truncate text-xl font-semibold tracking-tight text-purple-text">
+              Unusual spending
+            </h2>
+          </div>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-purple-muted transition hover:bg-purple-primary/10 hover:text-purple-text"
+            onClick={onClose}
+            aria-label="Close unusual spending dialog"
+          >
+            ×
+          </button>
+        </div>
+        <div className="no-scrollbar space-y-3 overflow-y-auto px-6 py-5">
+          {anomalies.map((item) => (
+            <div
+              key={item.item_id}
+              className="rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 light:border-amber-300 light:bg-amber-50"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-amber-100 light:text-amber-950">{item.name}</span>
+                <span className="text-base font-semibold text-amber-100 light:text-amber-950">₱{Number(item.amount).toFixed(2)}</span>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <CategoryBadge category={item.category} />
+                <span className="rounded-full border border-amber-300/25 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-200 light:border-amber-400/40 light:text-amber-800">
+                  {item.severity} increase
+                </span>
+              </div>
+              <p className="mt-2 text-xs text-amber-100/80 light:text-amber-900/80">
+                Typical ₱{Number(item.baseline_median).toFixed(2)} · {Number(item.ratio).toFixed(1)}× higher
+              </p>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="text-[10px] text-purple-muted">{item.expense_date ? `Logged ${item.expense_date}` : ''}</span>
+                <button
+                  type="button"
+                  className="rounded-lg border border-amber-300/25 px-3 py-1.5 text-xs font-medium text-amber-100 transition hover:bg-amber-400/10 light:border-amber-400 light:text-amber-900 light:hover:bg-amber-100"
+                  onClick={() => onReview(item.item_id)}
+                >
+                  Review expense
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function CategoryLimitRow({ status }) {
   if (!status?.limit) return null;
   const pct = Math.min(status.pct || 0, 100);
   const barColor = status.over ? 'bg-red-400' : pct >= 80 ? 'bg-amber-400' : 'bg-purple-primary';
@@ -605,7 +708,7 @@ function CategoryLimitRow({ category, spent, status }) {
 
 function WeeklyTracker({
   weekInfo, allowance, expenses, totals, comparison, categoryStatus, categoryRules,
-  onBudgetPatch, onAllowanceChange, onApplyIncome, onItemDeleted,
+  onBudgetPatch, onAllowanceChange, onApplyIncome, onItemDeleted, reviewItemId, onReviewHandled,
 }) {
   const { categories, labels } = useCategories();
   const today = new Date().getDay();
@@ -630,6 +733,7 @@ function WeeklyTracker({
   const logExpenseRef = useRef(null);
   const itemNameRef = useRef(null);
   const itemAmountRef = useRef(null);
+  const shortcutHandlerRef = useRef(null);
 
   useEffect(() => {
     if (itemName.trim()) setCategory(categorizeItem(itemName, categoryRules, categories));
@@ -651,8 +755,7 @@ function WeeklyTracker({
     });
   };
 
-  useEffect(() => {
-    const onKey = (e) => {
+  shortcutHandlerRef.current = (e) => {
       if (e.defaultPrevented) return;
       const typing = isEditableTarget(e.target);
       const metaEnter = (e.metaKey || e.ctrlKey) && e.key === 'Enter';
@@ -709,14 +812,13 @@ function WeeklyTracker({
           focusNewExpense();
         }
       }
-    };
+  };
+
+  useEffect(() => {
+    const onKey = (e) => shortcutHandlerRef.current?.(e);
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    adding, editingId, modalDay, shortcutsOpen, selDay, today,
-    itemName, itemAmount, itemNotes, itemTags, category,
-  ]);
+  }, []);
 
   const selectDay = (day, i) => {
     if (i > today) return;
@@ -817,6 +919,27 @@ function WeeklyTracker({
     setEditTags('');
     setEditCategory('other');
   };
+
+  useEffect(() => {
+    if (!reviewItemId) return;
+    for (const day of DAYS) {
+      const item = expenses[day]?.items?.find((candidate) => candidate.id === reviewItemId);
+      if (item) {
+        setSelDay(day);
+        setEditingId(item.id);
+        setEditName(item.name);
+        setEditAmount(String(item.amount));
+        setEditNotes(item.notes || '');
+        setEditTags(tagsToInput(item.tags));
+        setEditCategory(item.category);
+        requestAnimationFrame(() => {
+          logExpenseRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+        break;
+      }
+    }
+    onReviewHandled();
+  }, [reviewItemId, expenses, onReviewHandled]);
 
   const saveEdit = async (itemId) => {
     const name = editName.trim();
@@ -1249,7 +1372,7 @@ function WeeklyTracker({
                     {categoryStatus[c].over && <span className="ml-1 text-red-400">over</span>}
                   </p>
                 )}
-                <CategoryLimitRow category={c} spent={totals[c] || 0} status={categoryStatus?.[c]} />
+                <CategoryLimitRow status={categoryStatus?.[c]} />
               </div>
             ))}
           </div>
@@ -1778,11 +1901,17 @@ export default function Dashboard({ monthly = false }) {
   const [expenses, setExpenses] = useState({});
   const [totals, setTotals] = useState({ fare: 0, food: 0, other: 0, spent: 0, remaining: 0 });
   const [categoryStatus, setCategoryStatus] = useState(null);
-  const [categoryLimits, setCategoryLimits] = useState(null);
+  const [, setCategoryLimits] = useState(null);
   const [categoryRules, setCategoryRules] = useState([]);
   const [loading, setLoading] = useState(true);
   const [undoItem, setUndoItem] = useState(null);
+  const [anomalyRevision, setAnomalyRevision] = useState(0);
+  const [anomalyReport, setAnomalyReport] = useState(null);
+  const [anomalyModalOpen, setAnomalyModalOpen] = useState(false);
+  const [reviewItemId, setReviewItemId] = useState(null);
   const dashboardLoadRef = useRef(null);
+  const anomalyButtonRef = useRef(null);
+  const anomalies = Array.isArray(anomalyReport?.anomalies) ? anomalyReport.anomalies : [];
 
   const exportWeeklyCsv = useCallback(() => {
     runExport(() => downloadCsv('/api/export-csv?scope=week'));
@@ -1792,16 +1921,30 @@ export default function Dashboard({ monthly = false }) {
     if (!setHeaderActions) return undefined;
     if (tab === 'weekly' && screen === 'tracker') {
       setHeaderActions(
-        <IconButton label="Export weekly CSV" onClick={exportWeeklyCsv}>
-          <CsvIcon />
-          <span className="hidden sm:inline">Export CSV</span>
-        </IconButton>,
+        <div className="flex items-center gap-2">
+          {anomalies.length > 0 && (
+            <button
+              ref={anomalyButtonRef}
+              type="button"
+              className="flex h-8 w-8 items-center justify-center rounded-full border border-amber-400/40 bg-amber-500/10 text-amber-200 transition hover:border-amber-300 hover:bg-amber-500/20 light:border-amber-400 light:bg-amber-50 light:text-amber-800 light:hover:bg-amber-100"
+              onClick={() => setAnomalyModalOpen(true)}
+              title={`${anomalies.length} unusual spending ${anomalies.length === 1 ? 'item' : 'items'}`}
+              aria-label={`Open ${anomalies.length} unusual spending ${anomalies.length === 1 ? 'alert' : 'alerts'}`}
+            >
+              <span className="text-base font-bold leading-none" aria-hidden="true">!</span>
+            </button>
+          )}
+          <IconButton label="Export weekly CSV" onClick={exportWeeklyCsv}>
+            <CsvIcon />
+            <span className="hidden sm:inline">Export CSV</span>
+          </IconButton>
+        </div>,
       );
     } else {
       setHeaderActions(null);
     }
     return () => setHeaderActions(null);
-  }, [tab, screen, setHeaderActions, exportWeeklyCsv]);
+  }, [tab, screen, setHeaderActions, exportWeeklyCsv, anomalies.length]);
 
   const loadDashboard = useCallback(async () => {
     if (dashboardLoadRef.current) return dashboardLoadRef.current;
@@ -1844,6 +1987,7 @@ export default function Dashboard({ monthly = false }) {
       setCustomCategories,
       categories,
     });
+    setAnomalyRevision((revision) => revision + 1);
   }, [categories, setCustomCategories]);
 
   const handleAllowanceChange = useCallback(async (n) => {
@@ -1905,6 +2049,39 @@ export default function Dashboard({ monthly = false }) {
     loadDashboard();
   }, [loadDashboard]);
 
+  useEffect(() => {
+    if (tab !== 'weekly' || screen !== 'tracker') {
+      setAnomalyReport(null);
+      setAnomalyModalOpen(false);
+      return undefined;
+    }
+    let active = true;
+    apiFetch('/api/spending-anomalies')
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Anomaly check failed');
+        return response.json();
+      })
+      .then((data) => {
+        if (active) setAnomalyReport(data);
+      })
+      .catch(() => {
+        if (active) setAnomalyReport(null);
+      });
+    return () => { active = false; };
+  }, [tab, screen, anomalyRevision]);
+
+  const closeAnomalyModal = useCallback(() => {
+    setAnomalyModalOpen(false);
+    requestAnimationFrame(() => anomalyButtonRef.current?.focus());
+  }, []);
+
+  const reviewAnomaly = useCallback((itemId) => {
+    setAnomalyModalOpen(false);
+    setReviewItemId(itemId);
+  }, []);
+
+  const finishAnomalyReview = useCallback(() => setReviewItemId(null), []);
+
   const handleStart = (n) => {
     const emptyTotals = { fare: 0, food: 0, other: 0, spent: 0, remaining: n };
     setAllowance(n);
@@ -1916,6 +2093,9 @@ export default function Dashboard({ monthly = false }) {
   return (
     <div className="w-full">
       <UndoToast item={undoItem} onUndo={handleUndoDelete} onDismiss={dismissUndo} />
+      {anomalyModalOpen && anomalies.length > 0 && (
+        <AnomalyModal report={anomalyReport} onClose={closeAnomalyModal} onReview={reviewAnomaly} />
+      )}
 
       {tab === 'weekly' && (
         loading
@@ -1939,6 +2119,8 @@ export default function Dashboard({ monthly = false }) {
                 onAllowanceChange={handleAllowanceChange}
                 onApplyIncome={handleApplyIncome}
                 onItemDeleted={handleItemDeleted}
+                reviewItemId={reviewItemId}
+                onReviewHandled={finishAnomalyReview}
               />
             )
       )}

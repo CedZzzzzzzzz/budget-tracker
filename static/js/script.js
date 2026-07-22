@@ -133,9 +133,7 @@ async function loadWeekInfo() {
             document.getElementById('daysRemaining').textContent = data.days_remaining;
             document.getElementById('currentDay').textContent = data.current_day;
         }
-    } catch {
-        /* ignore */
-    }
+    } catch {}
 }
 
 async function startTracking() {
@@ -195,9 +193,7 @@ async function fetchBudgetData() {
             renderExpenseList();
             updateDayButtons();
         }
-    } catch {
-        /* ignore */
-    }
+    } catch {}
 }
 
 function updateDisplay(totals = null) {
@@ -311,9 +307,7 @@ async function loadMonthlySummary() {
                 renderWeeklyBreakdown(data.weeks);
             }
         }
-    } catch {
-        /* ignore */
-    }
+    } catch {}
 }
 
 function renderWeeklyBreakdown(weeks) {

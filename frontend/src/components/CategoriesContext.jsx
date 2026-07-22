@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../api';
 import { CATEGORIES, CATEGORY_COLORS, CATEGORY_LABELS, mergeCategoryMeta } from '../utils/categorize';
 
@@ -13,20 +13,21 @@ const CategoriesContext = createContext({
 
 export function CategoriesProvider({ children }) {
   const [customCategories, setCustomCategories] = useState([]);
+  const customCategoriesRef = useRef(customCategories);
+  customCategoriesRef.current = customCategories;
 
   const refreshCustomCategories = useCallback(async () => {
     const res = await apiFetch('/api/user-categories');
-    if (!res.ok) return customCategories;
+    if (!res.ok) return customCategoriesRef.current;
     const data = await res.json();
     const next = data.custom_categories || [];
     setCustomCategories(next);
     return next;
-  }, [customCategories]);
+  }, []);
 
   useEffect(() => {
     refreshCustomCategories().catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refreshCustomCategories]);
 
   const value = useMemo(() => {
     const meta = mergeCategoryMeta(customCategories);

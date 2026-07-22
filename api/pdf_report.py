@@ -129,12 +129,12 @@ def page_header(title, badge):
     return table
 
 
-def pdf_data_table(headers, rows, col_widths, emphasize_last=True):
+def pdf_data_table(headers, rows, col_widths, emphasize_last=True, unicode_all=False):
     data = [[pdf_paragraph(header, FONT_BOLD, 7, TEXT_SOFT) for header in headers]]
     for row in rows:
         cells = []
         for index, cell in enumerate(row):
-            font = FONT_UNICODE if emphasize_last and index == len(row) - 1 else FONT_BODY
+            font = FONT_UNICODE if unicode_all or emphasize_last and index == len(row) - 1 else FONT_BODY
             color = TEXT if emphasize_last and index == len(row) - 1 else TEXT_SOFT
             align = TA_RIGHT if emphasize_last and index == len(row) - 1 else TA_LEFT
             cells.append(pdf_paragraph(str(cell), font, 7.5, color, align))
