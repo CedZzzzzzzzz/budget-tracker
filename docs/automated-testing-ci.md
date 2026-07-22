@@ -49,9 +49,11 @@ production Neon database or send live Brevo messages.
 
 ### Frontend checks
 
-The frontend job runs:
+The frontend job installs the locked dependency tree with npm's peer-compatibility mode,
+then runs:
 
 ```text
+npm ci --legacy-peer-deps
 npm run lint
 npm run build
 ```

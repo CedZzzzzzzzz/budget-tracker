@@ -4,6 +4,11 @@ All notable changes to Budget Tracker are documented in this file.
 
 ## [0.1.16] - 2026-07-22
 
+### Fixed
+
+- Made the Linux CI dependency install tolerate optional native and WASM peer packages
+  while retaining the locked `npm ci` installation.
+
 ### Documentation
 
 - Added a complete guide to automated testing and continuous integration.

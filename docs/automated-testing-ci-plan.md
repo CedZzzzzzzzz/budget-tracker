@@ -97,7 +97,8 @@ GitHub Actions runs on pushes to `main` and on pull requests:
 1. The backend job checks out the repository, installs a pinned Python version, caches
    pip downloads, installs `requirements-dev.txt`, and runs `python -m pytest`.
 2. The frontend job checks out the repository, installs a pinned Node version, restores
-   the npm cache, runs `npm ci` in `frontend`, runs lint, and builds production assets.
+   the npm cache, runs `npm ci --legacy-peer-deps` in `frontend`, runs lint, and builds
+   production assets.
 3. Jobs use minimum read-only repository permissions and do not receive application
    secrets.
 4. Concurrency cancels obsolete runs for the same branch or pull request.
