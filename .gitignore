@@ -40,3 +40,4 @@ frontend/dist/
 .agents/
 agent-skills/
 .neon
+/tests/
