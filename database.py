@@ -4,7 +4,7 @@ import os
 import secrets
 import time
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -348,7 +348,7 @@ def hash_email_verification_token(raw_token):
 def create_email_verification_token(user_id):
     raw_token = secrets.token_urlsafe(32)
     token_hash = hash_email_verification_token(raw_token)
-    expires_at = datetime.utcnow() + timedelta(hours=24)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
     with db_transaction() as cursor:
         cursor.execute(
             "UPDATE email_verification_tokens SET used_at = CURRENT_TIMESTAMP "
@@ -406,7 +406,7 @@ def invalidate_password_reset_tokens(user_id):
 def create_password_reset_token(user_id):
     raw_token = secrets.token_urlsafe(32)
     token_hash = hash_reset_token(raw_token)
-    expires_at = datetime.utcnow() + timedelta(hours=1)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
     invalidate_password_reset_tokens(user_id)
     with db_cursor(commit=True) as cursor:
         cursor.execute(

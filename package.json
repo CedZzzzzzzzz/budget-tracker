@@ -1,5 +1,10 @@
 {
-  "version": "0.1.14",
+  "version": "0.1.16",
+  "scripts": {
+    "test": "npm run test:backend && npm run test:frontend",
+    "test:backend": "python -m pytest",
+    "test:frontend": "npm --prefix frontend run lint && npm --prefix frontend run build"
+  },
   "devDependencies": {
     "autoprefixer": "^10.5.2",
     "postcss": "^8.5.16",

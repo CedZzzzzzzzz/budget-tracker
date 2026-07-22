@@ -122,6 +122,34 @@ python app.py
 
 Visit `http://localhost:5000`
 
+## Testing
+
+Install backend development dependencies:
+
+```bash
+python -m pip install --requirement requirements-dev.txt
+```
+
+Run the complete local quality gate:
+
+```bash
+npm test
+```
+
+Run either side independently:
+
+```bash
+npm run test:backend
+npm run test:frontend
+```
+
+Backend tests use mocks and Flask test clients, so they do not require production
+credentials, a live database, or a Brevo connection. GitHub Actions runs backend tests
+and frontend lint/build checks independently for pushes to `main` and pull requests.
+
+See [Automated Testing and Continuous Integration](docs/automated-testing-ci.md) for the
+workflow, test-writing expectations, failure meanings, and troubleshooting guidance.
+
 ##  Deployment (Railway)
 
 **1. Install Railway CLI**

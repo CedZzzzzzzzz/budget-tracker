@@ -2,6 +2,38 @@
 
 All notable changes to Budget Tracker are documented in this file.
 
+## [0.1.16] - 2026-07-22
+
+### Documentation
+
+- Added a complete guide to automated testing and continuous integration.
+- Documented local commands, GitHub Actions verification, failure meanings, security
+  isolation, troubleshooting, and test requirements for future features.
+- Clarified that CI detects covered regressions but does not replace feature-specific
+  tests, manual review, or Git conflict resolution.
+
+## [0.1.15] - 2026-07-22
+
+### Added
+
+- Added a tracked backend test suite for account security, exports, anomaly detection,
+  migrations, API contracts, and transactional email templates.
+- Added root commands for backend tests, frontend lint/build checks, and the complete
+  local quality gate.
+- Added parallel GitHub Actions jobs for pushes to `main` and pull requests.
+- Added the automated testing and CI implementation plan and contributor instructions.
+- Updated the PostgreSQL binary driver for Python 3.13 development compatibility and
+  kept pytest in development dependencies only.
+
+### Security
+
+- CI uses read-only repository permissions and no production secrets, database, or live
+  email provider.
+
+### Performance
+
+- Backend and frontend CI jobs run in parallel and cache dependency downloads.
+
 ## [0.1.14] - 2026-07-22
 
 ### Documentation

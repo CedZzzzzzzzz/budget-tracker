@@ -3,6 +3,7 @@ budget_tracker.db
 
 # Python
 __pycache__/
+.pytest_cache/
 *.pyc
 *.pyo
 *.pyd
@@ -33,7 +34,9 @@ node_modules/
 frontend/dist/
 
 # Documents
-/docs
+/docs/*
+!/docs/automated-testing-ci-plan.md
+!/docs/automated-testing-ci.md
 /docs_feat
 .features.md
 .features2.md
@@ -42,4 +45,3 @@ frontend/dist/
 .agents/
 agent-skills/
 .neon
-/tests/
