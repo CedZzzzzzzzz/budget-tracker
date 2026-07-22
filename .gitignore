@@ -35,6 +35,8 @@ frontend/dist/
 # Documents
 /docs
 /docs_feat
+.features.md
+.features2.md
 
 # agent
 .agents/
