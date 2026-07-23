@@ -2,6 +2,28 @@
 
 All notable changes to Budget Tracker are documented in this file.
 
+## [0.5.0] - 2026-07-23
+
+### Added
+
+- Added Playwright browser tests for authentication redirects, successful login,
+  receipt selection, OCR draft review, itemized receipt saving, and CSRF retry behavior.
+- Added deterministic frontend API fixtures that do not require Flask, Neon, Gemini,
+  Brevo, production credentials, or real user data.
+- Added a Windows-safe frontend test runner that owns and closes the Vite server.
+- Added CI failure reports with Playwright traces and screenshots.
+
+### Changed
+
+- The frontend quality job now installs Chromium and runs behavior tests after lint and
+  the production build.
+- `npm run test:frontend` now reproduces the complete frontend CI gate locally.
+
+### Documentation
+
+- Added the frontend behavior-testing implementation plan, developer guide, coverage
+  matrix, and troubleshooting instructions.
+
 ## [0.4.0] - 2026-07-23
 
 ### Added
