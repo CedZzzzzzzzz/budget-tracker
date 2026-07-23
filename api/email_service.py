@@ -166,6 +166,15 @@ def preferred_email_transport():
     return None
 
 
+def delivery_transport_name():
+    transport = preferred_email_transport()
+    if transport:
+        return transport
+    if os.environ.get("FLASK_ENV", "development") != "production":
+        return "development_log"
+    return "unconfigured"
+
+
 def mail_configured():
     if not os.environ.get("SMTP_FROM"):
         return False
@@ -292,12 +301,15 @@ def send_password_reset_email(to_email, reset_url):
     )
 
     if not mail_configured():
-        logger.warning(
-            "No email configured — password reset link for %s:\n  %s",
-            to_email,
-            reset_url,
-        )
-        return True
+        if os.environ.get("FLASK_ENV", "development") != "production":
+            logger.warning(
+                "No email configured — password reset link for %s:\n  %s",
+                to_email,
+                reset_url,
+            )
+            return True
+        logger.error("Password reset email could not be sent because email is not configured")
+        return False
 
     transport = preferred_email_transport()
     if transport == "api" and brevo_api_key():
@@ -307,13 +319,27 @@ def send_password_reset_email(to_email, reset_url):
     return False
 
 
-def send_password_reset_email_background(to_email, reset_url):
-    threading.Thread(
-        target=send_password_reset_email,
-        args=(to_email, reset_url),
-        daemon=True,
-        name="password-reset-email",
-    ).start()
+def send_email_background(sender, args, name, on_complete=None):
+    def run():
+        success = sender(*args)
+        if on_complete:
+            try:
+                on_complete(success)
+            except Exception:
+                logger.exception("Email delivery completion callback failed")
+
+    thread = threading.Thread(target=run, daemon=True, name=name)
+    thread.start()
+    return thread
+
+
+def send_password_reset_email_background(to_email, reset_url, on_complete=None):
+    return send_email_background(
+        send_password_reset_email,
+        (to_email, reset_url),
+        "password-reset-email",
+        on_complete,
+    )
 
 
 def send_email_verification(to_email, verification_url):
@@ -349,10 +375,10 @@ def send_email_verification(to_email, verification_url):
     return False
 
 
-def send_email_verification_background(to_email, verification_url):
-    threading.Thread(
-        target=send_email_verification,
-        args=(to_email, verification_url),
-        daemon=True,
-        name="email-verification",
-    ).start()
+def send_email_verification_background(to_email, verification_url, on_complete=None):
+    return send_email_background(
+        send_email_verification,
+        (to_email, verification_url),
+        "email-verification",
+        on_complete,
+    )

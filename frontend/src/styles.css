@@ -490,6 +490,7 @@
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   box-shadow: var(--glass-shadow), inset -1px 0 0 var(--glass-highlight);
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
 }
 
 [data-theme="light"] .app-sidebar {
@@ -513,6 +514,7 @@
   gap: 6px;
   margin-bottom: 28px;
   padding: 0 8px;
+  flex-shrink: 0;
 }
 
 .app-sidebar-logo {
@@ -552,6 +554,23 @@
   transition: background 0.2s, color 0.2s, box-shadow 0.2s;
 }
 
+.app-sidebar-nav {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 8px;
+  scrollbar-width: none;
+}
+
+.app-sidebar-nav::-webkit-scrollbar {
+  display: none;
+}
+
 .app-nav-item:hover {
   color: var(--color-purple-text);
   background: var(--glass-bg-surface);
@@ -588,6 +607,40 @@
   margin-top: auto;
   padding: 12px 8px 0;
   border-top: 1px solid var(--glass-border-inner);
+  flex-shrink: 0;
+}
+
+@media (max-height: 760px) {
+  .app-sidebar {
+    padding-top: 12px;
+    padding-bottom: 10px;
+  }
+
+  .app-sidebar-brand {
+    gap: 3px;
+    margin-bottom: 12px;
+  }
+
+  .app-sidebar-logo {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+  }
+
+  .app-nav-item {
+    gap: 3px;
+    padding: 6px;
+  }
+
+  .app-sidebar-footer {
+    gap: 4px;
+    padding-top: 8px;
+  }
+
+  .app-sidebar-action {
+    width: 36px;
+    height: 36px;
+  }
 }
 
 .app-sidebar-user {
@@ -1009,5 +1062,4 @@
   fill: #9d4edd;
   opacity: 0.16;
 }
-
 

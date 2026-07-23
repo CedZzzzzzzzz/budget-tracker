@@ -35,11 +35,8 @@ frontend/dist/
 
 # Documents
 /docs/*
-!/docs/automated-testing-ci-plan.md
-!/docs/automated-testing-ci.md
-!/docs/features.md
-!/docs/features2.md
 /docs_feat
+!/docs/README.md
 .features.md
 .features2.md
 

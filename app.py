@@ -1,5 +1,6 @@
 from flask import Flask, render_template, session, redirect, url_for, jsonify
 from flask_cors import CORS
+import click
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -8,8 +9,71 @@ load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
 from config import config
 import database as db
-from api.routes import api
+from api.routes import api, validate_password
 from extensions import limiter
+
+
+def register_admin_commands(app):
+    @app.cli.group("admin")
+    def admin_commands():
+        """Manage administrator access from a trusted operator shell."""
+
+    @admin_commands.command("create")
+    @click.argument("username")
+    @click.argument("email")
+    def create_admin(username, email):
+        username = username.strip()
+        email = email.strip().lower()
+        if len(username) < 5 or len(username) > db.MAX_USERNAME_LEN:
+            raise click.ClickException(
+                f"Username must be between 5 and {db.MAX_USERNAME_LEN} characters."
+            )
+        if "@" not in email or len(email) > db.MAX_EMAIL_LEN:
+            raise click.ClickException("Enter a valid email address.")
+
+        password = click.prompt(
+            "Password",
+            hide_input=True,
+            confirmation_prompt=True,
+            type=str,
+        )
+        if len(password) > 128:
+            raise click.ClickException("Password is too long.")
+        is_valid, message = validate_password(password)
+        if not is_valid:
+            raise click.ClickException(message)
+
+        result = db.create_admin_user(username, email, password)
+        if result["status"] == "duplicate":
+            raise click.ClickException("That username or email is already registered.")
+        click.echo("Administrator account created and email marked verified.")
+
+    @admin_commands.command("grant")
+    @click.argument("username")
+    def grant_admin(username):
+        result = db.set_admin_role(username, True)
+        messages = {
+            "updated": "Administrator access granted.",
+            "unchanged": "The account is already an administrator.",
+            "not_found": "Account not found.",
+        }
+        click.echo(messages.get(result, "Administrator update failed."))
+        if result == "not_found":
+            raise click.ClickException(messages[result])
+
+    @admin_commands.command("revoke")
+    @click.argument("username")
+    def revoke_admin(username):
+        result = db.set_admin_role(username, False)
+        messages = {
+            "updated": "Administrator access revoked.",
+            "unchanged": "The account is already a normal user.",
+            "not_found": "Account not found.",
+            "last_admin": "Cannot revoke the last active administrator.",
+        }
+        click.echo(messages.get(result, "Administrator update failed."))
+        if result in ("not_found", "last_admin"):
+            raise click.ClickException(messages[result])
 
 
 
@@ -44,6 +108,7 @@ def create_app(config_name = "default"):
         CORS(app, supports_credentials=True)
 
     limiter.init_app(app)
+    register_admin_commands(app)
 
     @app.errorhandler(429)
     def rate_limit_exceeded(_e):
@@ -99,4 +164,3 @@ if __name__ == "__main__":
     )
 
 app = create_app(os.getenv("FLASK_ENV", "production"))
-

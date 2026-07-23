@@ -2,6 +2,63 @@
 
 All notable changes to Budget Tracker are documented in this file.
 
+## [0.3.0] - 2026-07-23
+
+### Added
+
+- Added an account-support drawer with account metadata, authentication history,
+  email-delivery history, session revocations, and administrative events.
+- Added protected admin actions to resend verification emails, send password-reset
+  emails, and force sign-out normal users.
+- Added searchable, filterable, and paginated audit history for actor, target, action,
+  outcome, source, and date range.
+- Added a read-only system-health panel for email delivery, login activity, and session
+  revocation.
+- Added database-backed authentication events and email-delivery events without storing
+  message contents or verification/reset tokens.
+
+### Security
+
+- Added server-validated session versions so forced sign-out, suspension, and password
+  changes invalidate previously issued sessions.
+- Admin support mutations require current-password confirmation, a reason, CSRF and
+  Origin validation, conservative rate limits, audit records, and protected admin
+  targets.
+- Admin-triggered emails have per-user, per-email-type cooldowns and never return secret
+  tokens to the administrator.
+
+### Documentation
+
+- Expanded the Admin Dashboard guide with account-support workflows, system-health
+  meanings, API routes, migration details, security boundaries, and deployment checks.
+
+## [0.2.0] - 2026-07-22
+
+### Added
+
+- Added a responsive admin dashboard with aggregate account metrics, verification and
+  login activity, paginated user management, and recent audit activity.
+- Added desktop account tables, mobile account cards, responsive filters, and accessible
+  suspend/reactivate confirmation dialogs aligned with the existing purple glass design.
+- Added role and account-status authorization, login timestamps, operator-only admin
+  role commands, account suspension/reactivation, and append-only admin audit events.
+- Added a secure terminal command for creating an already-verified administrator with a
+  hidden password confirmation prompt.
+- Added backend API, database transaction, authorization, and migration contract tests.
+
+### Security
+
+- Admin authorization is denied by default and revalidated from the database on every
+  admin request.
+- Account-status changes require the acting administrator's current password, reason,
+  CSRF token, valid Origin, and rate limit while preventing self/admin suspension.
+- Admin responses disable browser caching and exclude financial records, password data,
+  session identifiers, and authentication tokens.
+
+### Documentation
+
+- Added the approved implementation plan and operator/user guide for the admin dashboard.
+
 ## [0.1.16] - 2026-07-22
 
 ### Fixed

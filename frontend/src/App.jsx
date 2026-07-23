@@ -9,6 +9,7 @@ import Settings from './pages/Settings';
 import BudgetSetup from './pages/BudgetSetup';
 import Savings from './pages/Savings';
 import Reports from './pages/Reports';
+import AdminDashboard from './pages/AdminDashboard';
 import AppLayout from './components/AppLayout';
 
 export default function App() {
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/savings" element={<Savings />} />
           <Route path="/budget" element={<BudgetSetup />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/admin" element={<AdminDashboard />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

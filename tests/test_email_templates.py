@@ -74,3 +74,17 @@ def test_verification_email_has_plain_text_and_branded_html():
     assert "Verify your email address" in html_body
     assert "Verify email address &rarr;" in html_body
     assert "request a new link from the sign-in page" in html_body
+
+
+def test_password_reset_reports_failure_when_production_mail_is_unconfigured():
+    with patch.dict(
+        "api.email_service.os.environ",
+        {"FLASK_ENV": "production"},
+        clear=True,
+    ):
+        result = send_password_reset_email(
+            "person@example.com",
+            "https://app.example.com/reset-password?token=secret",
+        )
+
+    assert result is False

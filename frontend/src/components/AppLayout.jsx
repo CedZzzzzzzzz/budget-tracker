@@ -1,7 +1,7 @@
 import { useState, useEffect, createContext, useContext, useMemo } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { checkAuth, logoutSession } from '../api';
-import { NAV_ITEMS, matchNavItem } from '../utils/nav';
+import { ADMIN_NAV_ITEM, NAV_ITEMS, matchNavItem } from '../utils/nav';
 import { CategoriesProvider } from './CategoriesContext';
 import OnboardingTour from './OnboardingTour';
 
@@ -59,6 +59,13 @@ const SettingsIcon = () => (
     <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
   </svg>
 );
+const AdminIcon = () => (
+  <svg {...svgProps}>
+    <path d="M12 3 4.5 6v5.2c0 4.7 3.2 8.2 7.5 9.8 4.3-1.6 7.5-5.1 7.5-9.8V6L12 3Z" />
+    <path d="M9.5 11.5a2.5 2.5 0 1 1 5 0 2.5 2.5 0 0 1-5 0Z" />
+    <path d="M8.2 17c.8-1.3 2.1-2 3.8-2s3 .7 3.8 2" />
+  </svg>
+);
 const SunIcon = () => (
   <svg {...svgProps} className="h-[18px] w-[18px]">
     <circle cx="12" cy="12" r="4" />
@@ -90,6 +97,7 @@ const NAV_ICONS = {
   savings: SavingsIcon,
   budget: BudgetIcon,
   settings: SettingsIcon,
+  admin: AdminIcon,
 };
 
 const LayoutContext = createContext(null);
@@ -100,13 +108,13 @@ export function useAppLayout() {
   return ctx;
 }
 
-function SidebarNav({ onNavigate, tourActive }) {
+function SidebarNav({ onNavigate, tourActive, isAdmin }) {
   const linkCls = ({ isActive }) =>
     `app-nav-item ${isActive ? 'app-nav-item--active' : ''} ${tourActive && isActive ? 'ring-1 ring-purple-primary/50' : ''}`;
 
   return (
-    <nav className="flex flex-1 flex-col gap-1 px-2">
-      {NAV_ITEMS.map((item) => {
+    <nav className="app-sidebar-nav">
+      {[...NAV_ITEMS, ...(isAdmin ? [ADMIN_NAV_ITEM] : [])].map((item) => {
         const Icon = NAV_ICONS[item.id] || HomeIcon;
         return (
           <NavLink
@@ -132,6 +140,7 @@ export default function AppLayout() {
   const [username, setUsername] = useState('');
   const [authReady, setAuthReady] = useState(false);
   const [onboardingCompleted, setOnboardingCompleted] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [darkMode, setDarkMode] = useState(localStorage.getItem('darkMode') !== 'false');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [headerActions, setHeaderActions] = useState(null);
@@ -161,6 +170,7 @@ export default function AppLayout() {
         }
         if (d.username) setUsername(d.username);
         setOnboardingCompleted(Boolean(d.onboarding_completed));
+        setIsAdmin(Boolean(d.is_admin));
         setAuthReady(true);
       })
       .catch(() => {
@@ -186,8 +196,9 @@ export default function AppLayout() {
       username,
       markOnboardingDone: () => setOnboardingCompleted(true),
       onboardingActive: tourActive,
+      isAdmin,
     }),
-    [username, tourActive],
+    [username, tourActive, isAdmin],
   );
 
   if (!authReady) {
@@ -219,6 +230,7 @@ export default function AppLayout() {
             <SidebarNav
               onNavigate={() => setSidebarOpen(false)}
               tourActive={tourActive}
+              isAdmin={isAdmin}
             />
 
             <div className="app-sidebar-footer">

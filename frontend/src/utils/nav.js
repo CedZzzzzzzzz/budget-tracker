@@ -44,7 +44,18 @@ export const NAV_ITEMS = [
   },
 ];
 
+export const ADMIN_NAV_ITEM = {
+  id: 'admin',
+  path: '/admin',
+  label: 'Admin',
+  title: 'Admin Dashboard',
+  subtitle: 'Account health, access, and audit activity',
+};
+
 export function matchNavItem(pathname) {
+  if (pathname.startsWith('/admin')) {
+    return ADMIN_NAV_ITEM;
+  }
   if (pathname === '/dashboard/monthly') {
     return NAV_ITEMS.find((item) => item.id === 'monthly');
   }

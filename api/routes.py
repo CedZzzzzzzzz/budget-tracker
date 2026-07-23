@@ -1,5 +1,5 @@
-from flask import Blueprint, request, jsonify, session, Response, send_file
-from datetime import datetime, timedelta
+from flask import Blueprint, request, jsonify, session, Response, send_file, current_app, g
+from datetime import datetime, timedelta, timezone
 import csv
 import database as db
 from io import StringIO
@@ -11,6 +11,7 @@ import time
 from api.categorize import categorize_item, CATEGORY_LABELS, CATEGORIES
 from api.security import issue_csrf_token, verify_request_origin
 from api.email_service import (
+    delivery_transport_name,
     mail_configured,
     send_email_verification,
     send_email_verification_background,
@@ -65,7 +66,13 @@ MAX_TAGS_PER_ITEM = db.MAX_TAGS_PER_ITEM
 MAX_PASSWORD_LEN = 128
 ACCOUNT_EXPORT_LIMIT = "3 per hour"
 ACCOUNT_DELETION_LIMIT = "3 per day"
+ADMIN_MUTATION_LIMIT = "10 per hour"
+ADMIN_EMAIL_LIMIT = "6 per hour"
 MAX_VERIFICATION_TOKEN_LEN = 256
+MAX_ADMIN_SEARCH_LEN = 100
+MAX_ADMIN_REASON_LEN = 250
+ADMIN_PAGE_SIZE = 20
+ADMIN_MAX_PAGE_SIZE = 50
 
 
 def parse_item_notes_tags(data):
@@ -102,7 +109,7 @@ def login_required(f):
         if not user_id:
             return jsonify({"error": "Authentication required"}), 401
         try:
-            exists = db.user_exists(user_id)
+            exists = db.user_exists(user_id, int(session.get("session_version") or 0))
         except Exception as error:
             logger.exception("Authentication lookup failed: %s", error)
             return internal_error()
@@ -113,8 +120,142 @@ def login_required(f):
     return decorated
 
 
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not current_app.config.get("ADMIN_DASHBOARD_ENABLED", True):
+            return jsonify({"error": "Not found"}), 404
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Authentication required"}), 401
+        try:
+            state = db.get_user_auth_state(user_id)
+        except Exception as error:
+            logger.exception("Admin authorization lookup failed: %s", error)
+            return internal_error()
+        if not state or state.get("account_status") != "active" or not state.get("email_verified_at"):
+            session.clear()
+            return jsonify({"error": "Authentication required"}), 401
+        if int(state.get("session_version") or 0) != int(session.get("session_version") or 0):
+            session.clear()
+            return jsonify({"error": "Authentication required"}), 401
+        if state.get("role") != "admin":
+            return jsonify({"error": "Administrator access required"}), 403
+        g.admin_user = state
+        return f(*args, **kwargs)
+    return decorated
+
+
+def admin_rate_limit_key():
+    return f"admin:{session.get('user_id') or request.remote_addr or 'anonymous'}"
+
+
+@api.after_request
+def protect_admin_responses(response):
+    if request.path.startswith("/api/admin"):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
 def get_user_id():
     return session.get("user_id")
+
+
+def iso_datetime(value):
+    return value.isoformat() if value else None
+
+
+def serialize_admin_user(user):
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "email": user["email"],
+        "role": user["role"],
+        "account_status": user["account_status"],
+        "email_verified": bool(user.get("email_verified_at")),
+        "created_at": iso_datetime(user.get("created_at")),
+        "last_login_at": iso_datetime(user.get("last_login_at")),
+        "status_changed_at": iso_datetime(user.get("status_changed_at")),
+        "sessions_revoked_at": iso_datetime(user.get("sessions_revoked_at")),
+    }
+
+
+def positive_int(value, default, maximum=None):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed < 1:
+        return None
+    if maximum is not None:
+        parsed = min(parsed, maximum)
+    return parsed
+
+
+def parse_admin_date(value, end=False):
+    if not value:
+        return None
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return False
+    return parsed + timedelta(days=1) if end else parsed
+
+
+def admin_request_id():
+    raw_request_id = request.headers.get("X-Request-ID") or secrets.token_hex(8)
+    return "".join(
+        char for char in raw_request_id if char.isalnum() or char in "-_."
+    )[:64] or secrets.token_hex(8)
+
+
+def parse_admin_action_request():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return None, (jsonify({"error": "Current password and reason are required."}), 400)
+    current_password = data.get("current_password") or ""
+    raw_reason = data.get("reason") or ""
+    if not isinstance(current_password, str) or not isinstance(raw_reason, str):
+        return None, (jsonify({"error": "Current password and reason are required."}), 400)
+    reason = " ".join(raw_reason.split())
+    if not current_password or len(reason) < 5:
+        return None, (
+            jsonify({"error": "Enter your current password and a reason of at least 5 characters."}),
+            400,
+        )
+    if len(current_password) > MAX_PASSWORD_LEN or len(reason) > MAX_ADMIN_REASON_LEN:
+        return None, (jsonify({"error": "Invalid account-management details."}), 400)
+    return {
+        "current_password": current_password,
+        "reason": reason,
+        "request_id": admin_request_id(),
+    }, None
+
+
+def denied_admin_action(status, user_id, action, reason, request_id):
+    audit_target = None if status in ("invalid_password", "not_found", "forbidden") else user_id
+    try:
+        db.record_admin_audit_event(
+            get_user_id(),
+            audit_target,
+            action,
+            "denied",
+            reason=reason,
+            request_id=request_id,
+        )
+    except Exception as error:
+        logger.warning("Could not record denied admin action error=%s", type(error).__name__)
+    errors = {
+        "invalid_password": ("Current password is incorrect.", 401),
+        "self_target": ("You cannot perform this action on your own account.", 400),
+        "admin_target": ("Administrator accounts cannot be changed here.", 400),
+        "inactive_target": ("Suspended accounts cannot receive support emails.", 400),
+        "not_found": ("Account not found.", 404),
+        "forbidden": ("Administrator access required.", 403),
+    }
+    message, code = errors.get(status, ("The administrative action could not be completed.", 400))
+    return jsonify({"error": message}), code
 
 
 def resolve_category(user_id, category, name=""):
@@ -277,13 +418,84 @@ def app_base_url():
     return os.environ.get("APP_BASE_URL", "http://localhost:5173").rstrip("/")
 
 
-def deliver_verification_email(user_id, email):
+def complete_delivery_event(event_id, success):
+    try:
+        db.complete_email_delivery_event(event_id, success)
+    except Exception as error:
+        logger.warning("Could not update email delivery event error=%s", type(error).__name__)
+
+
+def record_security_event_safely(
+    user_id,
+    event_type,
+    outcome,
+    source="self_service",
+    actor_user_id=None,
+):
+    try:
+        db.record_security_event(
+            user_id,
+            event_type,
+            outcome,
+            source=source,
+            actor_user_id=actor_user_id,
+        )
+    except Exception as error:
+        logger.warning("Could not record security event error=%s", type(error).__name__)
+
+
+def deliver_verification_email(
+    user_id,
+    email,
+    source="self_service",
+    actor_user_id=None,
+):
     raw_token = db.create_email_verification_token(user_id)
     verification_url = f"{app_base_url()}/verify-email?token={raw_token}"
+    event_id = db.create_email_delivery_event(
+        user_id,
+        "email_verification",
+        source,
+        delivery_transport_name(),
+        actor_user_id=actor_user_id,
+    )
     if mail_configured():
-        send_email_verification_background(email, verification_url)
+        send_email_verification_background(
+            email,
+            verification_url,
+            on_complete=lambda success: complete_delivery_event(event_id, success),
+        )
         return True
-    return send_email_verification(email, verification_url)
+    success = send_email_verification(email, verification_url)
+    complete_delivery_event(event_id, success)
+    return success
+
+
+def deliver_password_reset_email(
+    user_id,
+    email,
+    source="self_service",
+    actor_user_id=None,
+):
+    raw_token = db.create_password_reset_token(user_id)
+    reset_url = f"{app_base_url()}/reset-password?token={raw_token}"
+    event_id = db.create_email_delivery_event(
+        user_id,
+        "password_reset",
+        source,
+        delivery_transport_name(),
+        actor_user_id=actor_user_id,
+    )
+    if mail_configured():
+        send_password_reset_email_background(
+            email,
+            reset_url,
+            on_complete=lambda success: complete_delivery_event(event_id, success),
+        )
+        return True
+    success = send_password_reset_email(email, reset_url)
+    complete_delivery_event(event_id, success)
+    return success
 
 
 @api.route("/csrf-token", methods=["GET"])
@@ -304,12 +516,7 @@ def forgot_password():
 
     user = db.get_user_by_email(email)
     if user:
-        raw_token = db.create_password_reset_token(user["id"])
-        reset_url = f"{app_base_url()}/reset-password?token={raw_token}"
-        if mail_configured():
-            send_password_reset_email_background(email, reset_url)
-        else:
-            send_password_reset_email(email, reset_url)
+        deliver_password_reset_email(user["id"], user["email"])
 
     return jsonify({"success": True, "message": RESET_SENT_MESSAGE})
 
@@ -334,9 +541,14 @@ def reset_password():
     if not user_id:
         return jsonify({"error": "Invalid or expired reset link."}), 400
 
-    if not db.update_user_password(user_id, password):
+    if db.update_user_password(user_id, password) is None:
         return jsonify({"error": "Unable to reset password."}), 500
 
+    record_security_event_safely(
+        user_id,
+        "password_reset_completed",
+        "success",
+    )
     return jsonify({"success": True, "message": "Password updated. You can sign in now."})
 
 
@@ -438,10 +650,17 @@ def login():
         return jsonify({"error": "Invalid credentials"}), 400
     user = db.get_user_by_username(username)
     if not user:
+        record_security_event_safely(None, "login_failed", "failed")
         return jsonify({"error": "Username does not exist"}), 401
     if not db.verify_password(user, password):
+        record_security_event_safely(user["id"], "login_failed", "failed")
         return jsonify({"error": "Incorrect password"}), 401
+    if user.get("account_status", "active") != "active":
+        record_security_event_safely(user["id"], "login_failed", "denied")
+        session.clear()
+        return jsonify({"error": "This account is currently unavailable."}), 403
     if not user.get("email_verified_at"):
+        record_security_event_safely(user["id"], "login_failed", "denied")
         session.clear()
         return jsonify({
             "error": "Verify your email before signing in.",
@@ -454,11 +673,25 @@ def login():
     session["user_id"] = user["id"]
     session["username"] = user["username"]
     session["insights_served"] = False
+    try:
+        current_session_version = db.mark_user_login(user["id"])
+        session["session_version"] = int(
+            current_session_version
+            if current_session_version is not None
+            else user.get("session_version") or 0
+        )
+    except Exception as error:
+        session["session_version"] = int(user.get("session_version") or 0)
+        logger.warning("Could not update login timestamp user_id=%s error=%s", user["id"], type(error).__name__)
     return jsonify({
         "success": True,
         "username": user["username"],
         "remember_me": remember,
         "onboarding_completed": bool(user.get("onboarding_completed_at")),
+        "is_admin": bool(
+            user.get("role") == "admin"
+            and current_app.config.get("ADMIN_DASHBOARD_ENABLED", True)
+        ),
     })
 
 
@@ -473,15 +706,394 @@ def check_auth():
     if "user_id" not in session:
         return jsonify({"authenticated": False})
     user_id = session.get("user_id")
-    if not db.user_exists(user_id):
+    state = db.get_user_auth_state(user_id)
+    if (
+        not state
+        or state.get("account_status") != "active"
+        or not state.get("email_verified_at")
+        or int(state.get("session_version") or 0) != int(session.get("session_version") or 0)
+    ):
         session.clear()
         return jsonify({"authenticated": False})
     return jsonify({
         "authenticated": True,
-        "username": session.get("username"),
+        "username": state.get("username") or session.get("username"),
         "remember_me": bool(session.permanent),
-        "onboarding_completed": db.is_onboarding_completed(user_id),
+        "onboarding_completed": bool(state.get("onboarding_completed_at")),
+        "is_admin": bool(
+            state.get("role") == "admin"
+            and current_app.config.get("ADMIN_DASHBOARD_ENABLED", True)
+        ),
     })
+
+
+@api.route("/admin/overview", methods=["GET"])
+@admin_required
+@handle_api_errors
+def admin_overview():
+    return jsonify({"metrics": db.get_admin_overview()})
+
+
+@api.route("/admin/users", methods=["GET"])
+@admin_required
+@handle_api_errors
+def admin_users():
+    query = (request.args.get("q") or "").strip()
+    status = (request.args.get("status") or "").strip().lower()
+    role = (request.args.get("role") or "").strip().lower()
+    sort = (request.args.get("sort") or "created_at").strip().lower()
+    direction = (request.args.get("direction") or "desc").strip().lower()
+    page = positive_int(request.args.get("page", 1), 1)
+    page_size = positive_int(
+        request.args.get("page_size", ADMIN_PAGE_SIZE),
+        ADMIN_PAGE_SIZE,
+        ADMIN_MAX_PAGE_SIZE,
+    )
+
+    if page is None or page_size is None:
+        return jsonify({"error": "Invalid pagination values."}), 400
+    if len(query) > MAX_ADMIN_SEARCH_LEN:
+        return jsonify({"error": "Search must be at most 100 characters."}), 400
+    if status not in ("", "active", "suspended"):
+        return jsonify({"error": "Invalid account status filter."}), 400
+    if role not in ("", "user", "admin"):
+        return jsonify({"error": "Invalid role filter."}), 400
+    if sort not in db.ADMIN_USER_SORTS:
+        return jsonify({"error": "Invalid sort field."}), 400
+    if direction not in ("asc", "desc"):
+        return jsonify({"error": "Invalid sort direction."}), 400
+
+    users, total = db.list_admin_users(
+        query=query,
+        status=status,
+        role=role,
+        page=page,
+        page_size=page_size,
+        sort=sort,
+        direction=direction,
+    )
+    pages = max(1, (total + page_size - 1) // page_size)
+    return jsonify({
+        "users": [serialize_admin_user(user) for user in users],
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "pages": pages,
+        },
+    })
+
+
+@api.route("/admin/audit-events", methods=["GET"])
+@admin_required
+@handle_api_errors
+def admin_audit_events():
+    query = (request.args.get("q") or "").strip()
+    action = (request.args.get("action") or "").strip().lower()
+    outcome = (request.args.get("outcome") or "").strip().lower()
+    source = (request.args.get("source") or "").strip().lower()
+    date_from = parse_admin_date((request.args.get("date_from") or "").strip())
+    date_to = parse_admin_date((request.args.get("date_to") or "").strip(), end=True)
+    page = positive_int(request.args.get("page", 1), 1)
+    page_size = positive_int(
+        request.args.get("page_size", ADMIN_PAGE_SIZE),
+        ADMIN_PAGE_SIZE,
+        ADMIN_MAX_PAGE_SIZE,
+    )
+    if page is None or page_size is None:
+        return jsonify({"error": "Invalid pagination values."}), 400
+    if len(query) > MAX_ADMIN_SEARCH_LEN:
+        return jsonify({"error": "Search must be at most 100 characters."}), 400
+    if action and action not in db.ADMIN_AUDIT_ACTIONS:
+        return jsonify({"error": "Invalid audit action filter."}), 400
+    if outcome not in ("", "success", "denied"):
+        return jsonify({"error": "Invalid audit outcome filter."}), 400
+    if source not in ("", "web", "operator_cli"):
+        return jsonify({"error": "Invalid audit source filter."}), 400
+    if date_from is False or date_to is False:
+        return jsonify({"error": "Dates must use YYYY-MM-DD format."}), 400
+    events, total = db.list_admin_audit_events(
+        query=query,
+        action=action,
+        outcome=outcome,
+        source=source,
+        date_from=date_from,
+        date_to=date_to,
+        page=page,
+        page_size=page_size,
+    )
+    return jsonify({
+        "events": [{
+            "id": event["id"],
+            "action": event["action"],
+            "outcome": event["outcome"],
+            "reason": event.get("reason") or "",
+            "source": event["source"],
+            "request_id": event.get("request_id"),
+            "created_at": iso_datetime(event.get("created_at")),
+            "actor_username": event.get("actor_username"),
+            "target_username": event.get("target_username"),
+        } for event in events],
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "pages": max(1, (total + page_size - 1) // page_size),
+        },
+    })
+
+
+@api.route("/admin/users/<int:user_id>", methods=["GET"])
+@admin_required
+@handle_api_errors
+def admin_user_detail(user_id):
+    user = db.get_admin_user_detail(user_id)
+    if not user:
+        return jsonify({"error": "Account not found."}), 404
+    history = db.list_user_security_history(user_id, limit=40)
+    return jsonify({
+        "user": serialize_admin_user(user),
+        "security_events": [{
+            "id": event["id"],
+            "category": event["category"],
+            "event_type": event["event_type"],
+            "outcome": event["outcome"],
+            "source": event["source"],
+            "detail": event.get("detail") or "",
+            "created_at": iso_datetime(event.get("created_at")),
+            "actor_username": event.get("actor_username"),
+        } for event in history],
+    })
+
+
+@api.route("/admin/system-health", methods=["GET"])
+@admin_required
+@handle_api_errors
+def admin_system_health():
+    raw_health = db.get_admin_system_health()
+    health = {
+        "authentication": raw_health.get("authentication", {}),
+        "email": raw_health.get("email", {}),
+    }
+    health["email"].update({
+        "configured": mail_configured(),
+        "transport": delivery_transport_name(),
+        "last_delivery_at": iso_datetime(health["email"].get("last_delivery_at")),
+    })
+    health["checked_at"] = datetime.now(timezone.utc).isoformat()
+    return jsonify({"health": health})
+
+
+def admin_email_support_action(user_id, action):
+    payload, error_response = parse_admin_action_request()
+    if error_response:
+        return error_response
+    authorization = db.authorize_admin_user_action(
+        get_user_id(),
+        user_id,
+        payload["current_password"],
+    )
+    if authorization.get("status") != "authorized":
+        return denied_admin_action(
+            authorization.get("status"),
+            user_id,
+            action,
+            payload["reason"],
+            payload["request_id"],
+        )
+    target = authorization["user"]
+    if target.get("account_status") != "active":
+        return denied_admin_action(
+            "inactive_target",
+            user_id,
+            action,
+            payload["reason"],
+            payload["request_id"],
+        )
+    if action == "resend_verification" and target.get("email_verified_at"):
+        try:
+            db.record_admin_audit_event(
+                get_user_id(),
+                user_id,
+                action,
+                "denied",
+                reason=payload["reason"],
+                request_id=payload["request_id"],
+            )
+        except Exception as error:
+            logger.warning("Could not record denied admin action error=%s", type(error).__name__)
+        return jsonify({"error": "This account is already verified."}), 400
+
+    email_type = "email_verification" if action == "resend_verification" else "password_reset"
+    if db.email_delivery_on_cooldown(user_id, email_type):
+        db.record_admin_audit_event(
+            get_user_id(),
+            user_id,
+            action,
+            "denied",
+            reason=payload["reason"],
+            request_id=payload["request_id"],
+        )
+        return jsonify({"error": "Wait at least 5 minutes before sending another email of this type."}), 429
+
+    if action == "resend_verification":
+        delivered = deliver_verification_email(
+            user_id,
+            target["email"],
+            source="admin",
+            actor_user_id=get_user_id(),
+        )
+        message = "Verification email queued."
+    else:
+        delivered = deliver_password_reset_email(
+            user_id,
+            target["email"],
+            source="admin",
+            actor_user_id=get_user_id(),
+        )
+        message = "Password-reset email queued."
+
+    db.record_admin_audit_event(
+        get_user_id(),
+        user_id,
+        action,
+        "success" if delivered else "denied",
+        reason=payload["reason"],
+        request_id=payload["request_id"],
+    )
+    if not delivered:
+        return jsonify({"error": "Email delivery is not configured or could not be started."}), 503
+    return jsonify({
+        "success": True,
+        "message": message,
+        "delivery_status": "queued" if mail_configured() else "sent",
+    })
+
+
+@api.route("/admin/users/<int:user_id>/resend-verification", methods=["POST"])
+@admin_required
+@limiter.limit(ADMIN_EMAIL_LIMIT, key_func=admin_rate_limit_key)
+@handle_api_errors
+def admin_resend_verification(user_id):
+    return admin_email_support_action(user_id, "resend_verification")
+
+
+@api.route("/admin/users/<int:user_id>/send-password-reset", methods=["POST"])
+@admin_required
+@limiter.limit(ADMIN_EMAIL_LIMIT, key_func=admin_rate_limit_key)
+@handle_api_errors
+def admin_send_password_reset(user_id):
+    return admin_email_support_action(user_id, "send_password_reset")
+
+
+@api.route("/admin/users/<int:user_id>/revoke-sessions", methods=["POST"])
+@admin_required
+@limiter.limit(ADMIN_MUTATION_LIMIT, key_func=admin_rate_limit_key)
+@handle_api_errors
+def admin_revoke_sessions(user_id):
+    payload, error_response = parse_admin_action_request()
+    if error_response:
+        return error_response
+    result = db.revoke_user_sessions(
+        get_user_id(),
+        user_id,
+        payload["current_password"],
+        payload["reason"],
+        request_id=payload["request_id"],
+    )
+    if result.get("status") != "updated":
+        return denied_admin_action(
+            result.get("status"),
+            user_id,
+            "revoke_sessions",
+            payload["reason"],
+            payload["request_id"],
+        )
+    return jsonify({
+        "success": True,
+        "message": "All active sessions were revoked.",
+        "user": serialize_admin_user(result["user"]),
+    })
+
+
+def admin_status_mutation(user_id, new_status):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Current password and reason are required."}), 400
+    current_password = data.get("current_password") or ""
+    raw_reason = data.get("reason") or ""
+    if not isinstance(current_password, str) or not isinstance(raw_reason, str):
+        return jsonify({"error": "Current password and reason are required."}), 400
+    reason = " ".join(raw_reason.split())
+    if not current_password or len(reason) < 5:
+        return jsonify({"error": "Enter your current password and a reason of at least 5 characters."}), 400
+    if len(current_password) > MAX_PASSWORD_LEN or len(reason) > MAX_ADMIN_REASON_LEN:
+        return jsonify({"error": "Invalid account-management details."}), 400
+
+    raw_request_id = request.headers.get("X-Request-ID") or secrets.token_hex(8)
+    request_id = "".join(
+        char for char in raw_request_id if char.isalnum() or char in "-_."
+    )[:64] or secrets.token_hex(8)
+    result = db.change_user_account_status(
+        get_user_id(),
+        user_id,
+        current_password,
+        new_status,
+        reason,
+        request_id=request_id,
+    )
+    status = result.get("status")
+    if status == "updated":
+        return jsonify({
+            "success": True,
+            "user": serialize_admin_user(result["user"]),
+        })
+    if status == "unchanged":
+        return jsonify({
+            "success": True,
+            "unchanged": True,
+            "user": serialize_admin_user(result["user"]),
+        })
+
+    action = "suspend_user" if new_status == "suspended" else "reactivate_user"
+    audit_target = None if status in ("invalid_password", "not_found", "forbidden") else user_id
+    try:
+        db.record_admin_audit_event(
+            get_user_id(),
+            audit_target,
+            action,
+            "denied",
+            reason=reason,
+            request_id=request_id,
+        )
+    except Exception as error:
+        logger.warning("Could not record denied admin action error=%s", type(error).__name__)
+
+    errors = {
+        "invalid_password": ("Current password is incorrect.", 401),
+        "self_target": ("You cannot change your own account status.", 400),
+        "admin_target": ("Administrator accounts cannot be changed here.", 400),
+        "not_found": ("Account not found.", 404),
+        "forbidden": ("Administrator access required.", 403),
+    }
+    message, code = errors.get(status, ("Account status could not be changed.", 400))
+    return jsonify({"error": message}), code
+
+
+@api.route("/admin/users/<int:user_id>/suspend", methods=["POST"])
+@admin_required
+@limiter.limit(ADMIN_MUTATION_LIMIT, key_func=admin_rate_limit_key)
+@handle_api_errors
+def admin_suspend_user(user_id):
+    return admin_status_mutation(user_id, "suspended")
+
+
+@api.route("/admin/users/<int:user_id>/reactivate", methods=["POST"])
+@admin_required
+@limiter.limit(ADMIN_MUTATION_LIMIT, key_func=admin_rate_limit_key)
+@handle_api_errors
+def admin_reactivate_user(user_id):
+    return admin_status_mutation(user_id, "active")
 
 
 @api.route("/onboarding/complete", methods=["POST"])
@@ -613,10 +1225,13 @@ def change_password():
     if db.verify_password(user, new_password):
         return jsonify({"error": "New password must be different from your current password."}), 400
 
-    if not db.update_user_password(user_id, new_password):
+    current_session_version = db.update_user_password(user_id, new_password)
+    if current_session_version is None:
         return jsonify({"error": "Unable to update password."}), 500
 
+    session["session_version"] = current_session_version
     db.invalidate_password_reset_tokens(user_id)
+    record_security_event_safely(user_id, "password_changed", "success")
     return jsonify({"success": True, "message": "Password updated."})
 
 

@@ -231,6 +231,28 @@ def create_user(username, email, password):
         return None
 
 
+def create_admin_user(username, email, password):
+    try:
+        with db_transaction(dict_cursor=True) as cursor:
+            cursor.execute(
+                "INSERT INTO users "
+                "(username, email, password_hash, role, account_status, email_verified_at) "
+                "VALUES (%s, %s, %s, 'admin', 'active', CURRENT_TIMESTAMP) "
+                "RETURNING id",
+                (username, normalize_email(email), generate_password_hash(password)),
+            )
+            user_id = cursor.fetchone()["id"]
+            cursor.execute(
+                "INSERT INTO admin_audit_events "
+                "(target_user_id, action, outcome, reason, source) "
+                "VALUES (%s, 'grant_admin', 'success', %s, 'operator_cli')",
+                (user_id, "Administrator account created by operator command."),
+            )
+            return {"status": "created", "user_id": user_id}
+    except psycopg2.IntegrityError:
+        return {"status": "duplicate"}
+
+
 def get_user_by_id(user_id):
     with db_cursor(dict_cursor=True) as cursor:
         cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
@@ -238,13 +260,44 @@ def get_user_by_id(user_id):
         return dict(user) if user else None
 
 
-def user_exists(user_id):
+def user_exists(user_id, session_version=0):
     with db_cursor() as cursor:
         cursor.execute(
-            "SELECT 1 FROM users WHERE id = %s AND email_verified_at IS NOT NULL",
-            (user_id,),
+            "SELECT 1 FROM users WHERE id = %s AND email_verified_at IS NOT NULL "
+            "AND account_status = 'active' AND session_version = %s",
+            (user_id, session_version),
         )
         return cursor.fetchone() is not None
+
+
+def get_user_auth_state(user_id):
+    with db_cursor(dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT id, username, email_verified_at, onboarding_completed_at, "
+            "role, account_status, session_version FROM users WHERE id = %s",
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def mark_user_login(user_id):
+    with db_transaction(dict_cursor=True) as cursor:
+        cursor.execute(
+            "UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = %s "
+            "RETURNING session_version",
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        cursor.execute(
+            "INSERT INTO auth_security_events "
+            "(user_id, event_type, outcome, source) "
+            "VALUES (%s, 'login_success', 'success', 'self_service')",
+            (user_id,),
+        )
+        return int(row["session_version"])
 
 
 def get_user_by_username(username):
@@ -335,6 +388,497 @@ def delete_user_account(user_id, password):
     finally:
         cursor.close()
         release_connection(conn)
+
+
+ADMIN_USER_SORTS = {
+    "created_at": "u.created_at",
+    "last_login_at": "u.last_login_at",
+    "username": "LOWER(u.username)",
+    "email": "LOWER(u.email)",
+}
+
+ADMIN_AUDIT_ACTIONS = frozenset({
+    "grant_admin",
+    "revoke_admin",
+    "suspend_user",
+    "reactivate_user",
+    "resend_verification",
+    "send_password_reset",
+    "revoke_sessions",
+})
+
+
+def clean_admin_reason(reason):
+    text = " ".join(str(reason or "").split())
+    return "".join(char for char in text if ord(char) >= 32)[:250]
+
+
+def escape_like_search(value):
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def get_admin_overview():
+    with db_cursor(dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT "
+            "COUNT(*) AS total_users, "
+            "COUNT(*) FILTER (WHERE email_verified_at IS NOT NULL) AS verified_users, "
+            "COUNT(*) FILTER (WHERE email_verified_at IS NULL) AS unverified_users, "
+            "COUNT(*) FILTER (WHERE account_status = 'active') AS active_users, "
+            "COUNT(*) FILTER (WHERE account_status = 'suspended') AS suspended_users, "
+            "COUNT(*) FILTER (WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '7 days') AS new_users_7d, "
+            "COUNT(*) FILTER (WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days') AS new_users_30d, "
+            "COUNT(*) FILTER (WHERE last_login_at >= CURRENT_TIMESTAMP - INTERVAL '7 days') AS logins_7d, "
+            "COUNT(*) FILTER (WHERE last_login_at >= CURRENT_TIMESTAMP - INTERVAL '30 days') AS logins_30d "
+            "FROM users"
+        )
+        row = dict(cursor.fetchone())
+        return {key: int(value or 0) for key, value in row.items()}
+
+
+def list_admin_users(
+    query="",
+    status="",
+    role="",
+    page=1,
+    page_size=20,
+    sort="created_at",
+    direction="desc",
+):
+    conditions = []
+    params = []
+    if query:
+        needle = f"%{escape_like_search(query)}%"
+        conditions.append("(u.username ILIKE %s ESCAPE '\\' OR u.email ILIKE %s ESCAPE '\\')")
+        params.extend([needle, needle])
+    if status:
+        conditions.append("u.account_status = %s")
+        params.append(status)
+    if role:
+        conditions.append("u.role = %s")
+        params.append(role)
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    sort_column = ADMIN_USER_SORTS.get(sort, ADMIN_USER_SORTS["created_at"])
+    sort_direction = "ASC" if direction == "asc" else "DESC"
+    offset = (page - 1) * page_size
+
+    with db_cursor(dict_cursor=True) as cursor:
+        cursor.execute(
+            f"SELECT COUNT(*) AS total FROM users u {where_clause}",
+            tuple(params),
+        )
+        total = int(cursor.fetchone()["total"])
+        cursor.execute(
+            "SELECT u.id, u.username, u.email, u.created_at, u.email_verified_at, "
+            "u.last_login_at, u.account_status, u.role, u.status_changed_at, "
+            "u.sessions_revoked_at "
+            f"FROM users u {where_clause} "
+            f"ORDER BY {sort_column} {sort_direction} NULLS LAST, u.id {sort_direction} "
+            "LIMIT %s OFFSET %s",
+            tuple([*params, page_size, offset]),
+        )
+        return [dict(row) for row in cursor.fetchall()], total
+
+
+def list_admin_audit_events(
+    query="",
+    action="",
+    outcome="",
+    source="",
+    date_from=None,
+    date_to=None,
+    page=1,
+    page_size=20,
+):
+    conditions = []
+    params = []
+    if query:
+        needle = f"%{escape_like_search(query)}%"
+        conditions.append(
+            "(actors.username ILIKE %s ESCAPE '\\' OR "
+            "targets.username ILIKE %s ESCAPE '\\')"
+        )
+        params.extend([needle, needle])
+    if action:
+        conditions.append("events.action = %s")
+        params.append(action)
+    if outcome:
+        conditions.append("events.outcome = %s")
+        params.append(outcome)
+    if source:
+        conditions.append("events.source = %s")
+        params.append(source)
+    if date_from:
+        conditions.append("events.created_at >= %s")
+        params.append(date_from)
+    if date_to:
+        conditions.append("events.created_at < %s")
+        params.append(date_to)
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    offset = (page - 1) * page_size
+    with db_cursor(dict_cursor=True) as cursor:
+        joins = (
+            "FROM admin_audit_events AS events "
+            "LEFT JOIN users AS actors ON actors.id = events.actor_user_id "
+            "LEFT JOIN users AS targets ON targets.id = events.target_user_id "
+        )
+        cursor.execute(
+            f"SELECT COUNT(*) AS total {joins} {where_clause}",
+            tuple(params),
+        )
+        total = int(cursor.fetchone()["total"])
+        cursor.execute(
+            "SELECT events.id, events.action, events.outcome, events.reason, events.source, "
+            "events.request_id, events.created_at, actors.username AS actor_username, "
+            "targets.username AS target_username "
+            f"{joins} {where_clause} "
+            "ORDER BY events.created_at DESC, events.id DESC LIMIT %s OFFSET %s",
+            tuple([*params, page_size, offset]),
+        )
+        return [dict(row) for row in cursor.fetchall()], total
+
+
+def get_admin_user_detail(user_id):
+    with db_cursor(dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT id, username, email, role, account_status, email_verified_at, "
+            "created_at, last_login_at, status_changed_at, sessions_revoked_at "
+            "FROM users WHERE id = %s",
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def list_user_security_history(user_id, limit=30):
+    with db_cursor(dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT history.id, history.category, history.event_type, history.outcome, "
+            "history.source, history.detail, history.created_at, history.actor_username "
+            "FROM ("
+            "SELECT events.id, 'authentication' AS category, events.event_type, "
+            "events.outcome, events.source, '' AS detail, events.created_at, "
+            "actors.username AS actor_username "
+            "FROM auth_security_events AS events "
+            "LEFT JOIN users AS actors ON actors.id = events.actor_user_id "
+            "WHERE events.user_id = %s "
+            "UNION ALL "
+            "SELECT deliveries.id, 'email' AS category, deliveries.email_type AS event_type, "
+            "deliveries.status AS outcome, deliveries.source, deliveries.transport AS detail, "
+            "deliveries.created_at, actors.username AS actor_username "
+            "FROM email_delivery_events AS deliveries "
+            "LEFT JOIN users AS actors ON actors.id = deliveries.actor_user_id "
+            "WHERE deliveries.user_id = %s "
+            "UNION ALL "
+            "SELECT audits.id, 'administration' AS category, audits.action AS event_type, "
+            "audits.outcome, audits.source, audits.reason AS detail, audits.created_at, "
+            "actors.username AS actor_username "
+            "FROM admin_audit_events AS audits "
+            "LEFT JOIN users AS actors ON actors.id = audits.actor_user_id "
+            "WHERE audits.target_user_id = %s"
+            ") AS history ORDER BY history.created_at DESC, history.id DESC LIMIT %s",
+            (user_id, user_id, user_id, limit),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def record_security_event(
+    user_id,
+    event_type,
+    outcome,
+    source="self_service",
+    actor_user_id=None,
+):
+    with db_cursor(commit=True) as cursor:
+        cursor.execute(
+            "INSERT INTO auth_security_events "
+            "(user_id, actor_user_id, event_type, outcome, source) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (user_id, actor_user_id, event_type, outcome, source),
+        )
+
+
+def create_email_delivery_event(
+    user_id,
+    email_type,
+    source,
+    transport,
+    actor_user_id=None,
+):
+    with db_cursor(commit=True, dict_cursor=True) as cursor:
+        cursor.execute(
+            "INSERT INTO email_delivery_events "
+            "(user_id, actor_user_id, email_type, status, source, transport) "
+            "VALUES (%s, %s, %s, 'queued', %s, %s) RETURNING id",
+            (user_id, actor_user_id, email_type, source, transport),
+        )
+        return int(cursor.fetchone()["id"])
+
+
+def complete_email_delivery_event(event_id, success):
+    with db_cursor(commit=True) as cursor:
+        cursor.execute(
+            "UPDATE email_delivery_events SET status = %s, completed_at = CURRENT_TIMESTAMP "
+            "WHERE id = %s AND status = 'queued'",
+            ("sent" if success else "failed", event_id),
+        )
+        return cursor.rowcount == 1
+
+
+def email_delivery_on_cooldown(user_id, email_type, minutes=5):
+    with db_cursor() as cursor:
+        cursor.execute(
+            "SELECT 1 FROM email_delivery_events WHERE user_id = %s AND email_type = %s "
+            "AND source = 'admin' AND created_at >= "
+            "CURRENT_TIMESTAMP - (%s * INTERVAL '1 minute') LIMIT 1",
+            (user_id, email_type, minutes),
+        )
+        return cursor.fetchone() is not None
+
+
+def get_admin_system_health():
+    with db_cursor(dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT "
+            "COUNT(*) FILTER (WHERE event_type = 'login_success' AND outcome = 'success' "
+            "AND created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours') AS login_success_24h, "
+            "COUNT(*) FILTER (WHERE event_type = 'login_failed' "
+            "AND created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours') AS login_failed_24h, "
+            "COUNT(*) FILTER (WHERE event_type = 'sessions_revoked' "
+            "AND created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours') AS sessions_revoked_24h "
+            "FROM auth_security_events"
+        )
+        auth = dict(cursor.fetchone())
+        cursor.execute(
+            "SELECT "
+            "COUNT(*) FILTER (WHERE status = 'queued' "
+            "AND created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours') AS queued_24h, "
+            "COUNT(*) FILTER (WHERE status = 'sent' "
+            "AND created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours') AS sent_24h, "
+            "COUNT(*) FILTER (WHERE status = 'failed' "
+            "AND created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours') AS failed_24h, "
+            "MAX(completed_at) AS last_delivery_at FROM email_delivery_events"
+        )
+        email = dict(cursor.fetchone())
+    return {
+        "authentication": {
+            key: int(value or 0) for key, value in auth.items()
+        },
+        "email": {
+            "queued_24h": int(email.get("queued_24h") or 0),
+            "sent_24h": int(email.get("sent_24h") or 0),
+            "failed_24h": int(email.get("failed_24h") or 0),
+            "last_delivery_at": email.get("last_delivery_at"),
+        },
+    }
+
+
+def authorize_admin_user_action(admin_user_id, target_user_id, admin_password):
+    with db_transaction(dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT id, password_hash, role, account_status FROM users "
+            "WHERE id = %s FOR UPDATE",
+            (admin_user_id,),
+        )
+        actor = cursor.fetchone()
+        if not actor or actor["role"] != "admin" or actor["account_status"] != "active":
+            return {"status": "forbidden"}
+        if not check_password_hash(actor["password_hash"], admin_password):
+            return {"status": "invalid_password"}
+        if admin_user_id == target_user_id:
+            return {"status": "self_target"}
+        cursor.execute(
+            "SELECT id, username, email, role, account_status, email_verified_at, "
+            "created_at, last_login_at, status_changed_at, sessions_revoked_at "
+            "FROM users WHERE id = %s FOR UPDATE",
+            (target_user_id,),
+        )
+        target = cursor.fetchone()
+        if not target:
+            return {"status": "not_found"}
+        if target["role"] == "admin":
+            return {"status": "admin_target"}
+        return {"status": "authorized", "user": dict(target)}
+
+
+def revoke_user_sessions(
+    admin_user_id,
+    target_user_id,
+    admin_password,
+    reason,
+    request_id=None,
+):
+    with db_transaction(dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT id, password_hash, role, account_status FROM users "
+            "WHERE id = %s FOR UPDATE",
+            (admin_user_id,),
+        )
+        actor = cursor.fetchone()
+        if not actor or actor["role"] != "admin" or actor["account_status"] != "active":
+            return {"status": "forbidden"}
+        if not check_password_hash(actor["password_hash"], admin_password):
+            return {"status": "invalid_password"}
+        if admin_user_id == target_user_id:
+            return {"status": "self_target"}
+        cursor.execute(
+            "SELECT id, role FROM users WHERE id = %s FOR UPDATE",
+            (target_user_id,),
+        )
+        target = cursor.fetchone()
+        if not target:
+            return {"status": "not_found"}
+        if target["role"] == "admin":
+            return {"status": "admin_target"}
+        cursor.execute(
+            "UPDATE users SET session_version = session_version + 1, "
+            "sessions_revoked_at = CURRENT_TIMESTAMP WHERE id = %s "
+            "RETURNING id, username, email, role, account_status, email_verified_at, "
+            "created_at, last_login_at, status_changed_at, sessions_revoked_at",
+            (target_user_id,),
+        )
+        updated = dict(cursor.fetchone())
+        cursor.execute(
+            "INSERT INTO auth_security_events "
+            "(user_id, actor_user_id, event_type, outcome, source) "
+            "VALUES (%s, %s, 'sessions_revoked', 'success', 'admin')",
+            (target_user_id, admin_user_id),
+        )
+        cursor.execute(
+            "INSERT INTO admin_audit_events "
+            "(actor_user_id, target_user_id, action, outcome, reason, source, request_id) "
+            "VALUES (%s, %s, 'revoke_sessions', 'success', %s, 'web', %s)",
+            (
+                admin_user_id,
+                target_user_id,
+                clean_admin_reason(reason),
+                request_id,
+            ),
+        )
+        return {"status": "updated", "user": updated}
+
+
+def record_admin_audit_event(
+    actor_user_id,
+    target_user_id,
+    action,
+    outcome,
+    reason="",
+    source="web",
+    request_id=None,
+):
+    with db_cursor(commit=True) as cursor:
+        cursor.execute(
+            "INSERT INTO admin_audit_events "
+            "(actor_user_id, target_user_id, action, outcome, reason, source, request_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (
+                actor_user_id,
+                target_user_id,
+                action,
+                outcome,
+                clean_admin_reason(reason),
+                source,
+                request_id,
+            ),
+        )
+
+
+def change_user_account_status(
+    admin_user_id,
+    target_user_id,
+    admin_password,
+    new_status,
+    reason,
+    request_id=None,
+):
+    action = "suspend_user" if new_status == "suspended" else "reactivate_user"
+    with db_transaction(dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT id, password_hash, role, account_status FROM users "
+            "WHERE id = %s FOR UPDATE",
+            (admin_user_id,),
+        )
+        actor = cursor.fetchone()
+        if not actor or actor["role"] != "admin" or actor["account_status"] != "active":
+            return {"status": "forbidden"}
+        if not check_password_hash(actor["password_hash"], admin_password):
+            return {"status": "invalid_password"}
+        if admin_user_id == target_user_id:
+            return {"status": "self_target"}
+
+        cursor.execute(
+            "SELECT id, username, email, role, account_status, email_verified_at, "
+            "created_at, last_login_at, status_changed_at, sessions_revoked_at FROM users "
+            "WHERE id = %s FOR UPDATE",
+            (target_user_id,),
+        )
+        target = cursor.fetchone()
+        if not target:
+            return {"status": "not_found"}
+        if target["role"] == "admin":
+            return {"status": "admin_target"}
+        if target["account_status"] == new_status:
+            return {"status": "unchanged", "user": dict(target)}
+
+        cursor.execute(
+            "UPDATE users SET account_status = %s, status_changed_at = CURRENT_TIMESTAMP, "
+            "session_version = session_version + 1, sessions_revoked_at = CURRENT_TIMESTAMP "
+            "WHERE id = %s RETURNING id, username, email, role, account_status, "
+            "email_verified_at, created_at, last_login_at, status_changed_at, sessions_revoked_at",
+            (new_status, target_user_id),
+        )
+        updated = dict(cursor.fetchone())
+        cursor.execute(
+            "INSERT INTO admin_audit_events "
+            "(actor_user_id, target_user_id, action, outcome, reason, source, request_id) "
+            "VALUES (%s, %s, %s, 'success', %s, 'web', %s)",
+            (
+                admin_user_id,
+                target_user_id,
+                action,
+                clean_admin_reason(reason),
+                request_id,
+            ),
+        )
+        return {"status": "updated", "user": updated}
+
+
+def set_admin_role(username, make_admin):
+    next_role = "admin" if make_admin else "user"
+    action = "grant_admin" if make_admin else "revoke_admin"
+    with db_transaction(dict_cursor=True) as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(583920174)")
+        cursor.execute(
+            "SELECT id, username, role, account_status FROM users "
+            "WHERE username = %s FOR UPDATE",
+            (username,),
+        )
+        target = cursor.fetchone()
+        if not target:
+            return "not_found"
+        if target["role"] == next_role:
+            return "unchanged"
+        if not make_admin and target["role"] == "admin" and target["account_status"] == "active":
+            cursor.execute(
+                "SELECT COUNT(*) AS total FROM users "
+                "WHERE role = 'admin' AND account_status = 'active'"
+            )
+            if int(cursor.fetchone()["total"]) <= 1:
+                return "last_admin"
+
+        cursor.execute(
+            "UPDATE users SET role = %s WHERE id = %s",
+            (next_role, target["id"]),
+        )
+        cursor.execute(
+            "INSERT INTO admin_audit_events "
+            "(target_user_id, action, outcome, reason, source) "
+            "VALUES (%s, %s, 'success', %s, 'operator_cli')",
+            (target["id"], action, "Administrator role changed by operator command."),
+        )
+        return "updated"
 
 
 def hash_reset_token(raw_token):
@@ -436,13 +980,15 @@ def consume_password_reset_token(raw_token):
 
 
 def update_user_password(user_id, password):
-    with db_cursor(commit=True) as cursor:
+    with db_transaction(dict_cursor=True) as cursor:
         password_hash = generate_password_hash(password)
         cursor.execute(
-            'UPDATE users SET password_hash = %s WHERE id = %s',
+            'UPDATE users SET password_hash = %s, session_version = session_version + 1, '
+            'sessions_revoked_at = CURRENT_TIMESTAMP WHERE id = %s RETURNING session_version',
             (password_hash, user_id),
         )
-        return cursor.rowcount > 0
+        row = cursor.fetchone()
+        return int(row["session_version"]) if row else None
 
 
 def update_user_profile(user_id, username=None, email=None, reset_email_verification=False):

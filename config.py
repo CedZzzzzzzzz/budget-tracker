@@ -8,6 +8,9 @@ class Config:
     SESSION_COOKIE_SAMESITE = "Lax"
     PERMANENT_SESSION_LIFETIME = timedelta(days=30)
     SESSION_REFRESH_EACH_REQUEST = True
+    ADMIN_DASHBOARD_ENABLED = os.environ.get("ADMIN_DASHBOARD_ENABLED", "true").strip().lower() in (
+        "1", "true", "yes", "on"
+    )
     DEBUG = True
 
 class ProductionConfig(Config):
