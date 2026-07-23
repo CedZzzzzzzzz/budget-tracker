@@ -7,14 +7,14 @@ from flask import jsonify
 logger = logging.getLogger(__name__)
 
 try:
-    from google.api_core import exceptions as google_api_exceptions
+    from google.genai import errors as google_genai_errors
     GEMINI_ERRORS = (
         ValueError,
         TypeError,
         KeyError,
         AttributeError,
         OSError,
-        google_api_exceptions.GoogleAPIError,
+        google_genai_errors.APIError,
     )
 except ImportError:
     GEMINI_ERRORS = (ValueError, TypeError, KeyError, AttributeError, OSError)

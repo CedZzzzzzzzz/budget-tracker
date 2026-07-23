@@ -116,6 +116,10 @@ def create_app(config_name = "default"):
             "error": "Too many attempts. Please wait a few minutes and try again.",
         }), 429
 
+    @app.errorhandler(413)
+    def request_too_large(_e):
+        return jsonify({"error": "The uploaded file is too large."}), 413
+
     app.register_blueprint(api)
 
     with app.app_context():

@@ -8,6 +8,7 @@ import UndoToast from '../components/UndoToast';
 import CategoryBadge from '../components/CategoryBadge';
 import { useCategories } from '../components/CategoriesContext';
 import ShortcutsHelp, { isEditableTarget } from '../components/ShortcutsHelp';
+import ReceiptScanner from '../components/ReceiptScanner';
 import {
   categorizeItem,
   categoryLabel,
@@ -709,6 +710,7 @@ function CategoryLimitRow({ status }) {
 function WeeklyTracker({
   weekInfo, allowance, expenses, totals, comparison, categoryStatus, categoryRules,
   onBudgetPatch, onAllowanceChange, onApplyIncome, onItemDeleted, reviewItemId, onReviewHandled,
+  receiptOcrEnabled,
 }) {
   const { categories, labels } = useCategories();
   const today = new Date().getDay();
@@ -720,6 +722,7 @@ function WeeklyTracker({
   const [quickPhrase, setQuickPhrase] = useState('');
   const [quickError, setQuickError] = useState('');
   const [category, setCategory] = useState('other');
+  const [categoryLocked, setCategoryLocked] = useState(false);
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
@@ -730,14 +733,36 @@ function WeeklyTracker({
   const [savingEdit, setSavingEdit] = useState(false);
   const [modalDay, setModalDay] = useState(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [receiptOpen, setReceiptOpen] = useState(false);
   const logExpenseRef = useRef(null);
   const itemNameRef = useRef(null);
   const itemAmountRef = useRef(null);
   const shortcutHandlerRef = useRef(null);
 
   useEffect(() => {
-    if (itemName.trim()) setCategory(categorizeItem(itemName, categoryRules, categories));
-  }, [itemName, categoryRules, categories]);
+    const name = itemName.trim();
+    if (!name || categoryLocked) return undefined;
+    setCategory(categorizeItem(name, categoryRules, categories));
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      apiFetch('/api/categorize-item', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+        signal: controller.signal,
+      })
+        .then((response) => response.ok ? response.json() : null)
+        .then((result) => {
+          if (result?.category && categories.includes(result.category)) {
+            setCategory(result.category);
+          }
+        })
+        .catch(() => {});
+    }, 320);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [itemName, categoryRules, categories, categoryLocked]);
 
   const clearForm = () => {
     setItemName('');
@@ -745,6 +770,7 @@ function WeeklyTracker({
     setItemNotes('');
     setItemTags('');
     setCategory('other');
+    setCategoryLocked(false);
   };
 
   const focusNewExpense = () => {
@@ -1169,10 +1195,25 @@ function WeeklyTracker({
 
           {selDay && (
             <div className={`${cardInner} space-y-4 p-4`}>
-              <p className={subtext}>
-                Adding for <span className="font-medium text-purple-primary-light">{selDay}</span>
-                <span className="ml-2 text-purple-muted/70">Press <kbd className="rounded border border-purple-primary/20 px-1 font-mono text-[10px]">N</kbd> to focus</span>
-              </p>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className={subtext}>
+                  Adding for <span className="font-medium text-purple-primary-light">{selDay}</span>
+                  <span className="ml-2 text-purple-muted/70">Press <kbd className="rounded border border-purple-primary/20 px-1 font-mono text-[10px]">N</kbd> to focus</span>
+                </p>
+                {receiptOcrEnabled && (
+                  <button
+                    type="button"
+                    onClick={() => setReceiptOpen(true)}
+                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-purple-primary/25 bg-purple-primary/10 px-3.5 text-sm font-semibold text-purple-primary-light transition hover:bg-purple-primary/20"
+                  >
+                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M5 7h3l1.5-2h5L16 7h3a2 2 0 0 1 2 2v9H3V9a2 2 0 0 1 2-2Z" />
+                      <circle cx="12" cy="12.5" r="3.5" />
+                    </svg>
+                    Scan receipt
+                  </button>
+                )}
+              </div>
               <div className="space-y-1">
                 <label className={label}>Quick add</label>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
@@ -1204,7 +1245,10 @@ function WeeklyTracker({
                     className={input}
                     placeholder="Jeepney fare, lunch…"
                     value={itemName}
-                    onChange={(e) => setItemName(e.target.value)}
+                    onChange={(e) => {
+                      setItemName(e.target.value);
+                      setCategoryLocked(false);
+                    }}
                     onKeyDown={(e) => e.key === 'Enter' && addItem()}
                   />
                 </div>
@@ -1258,7 +1302,10 @@ function WeeklyTracker({
                   <CategoryBadge category={category} />
                   <select
                     value={category}
-                    onChange={(e) => setCategory(e.target.value)}
+                    onChange={(e) => {
+                      setCategory(e.target.value);
+                      setCategoryLocked(true);
+                    }}
                     className="glass-input rounded-lg px-2 py-1 text-xs text-purple-text-dim"
                   >
                     {categories.map((c) => (
@@ -1396,6 +1443,14 @@ function WeeklyTracker({
       )}
 
       <ShortcutsHelp open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <ReceiptScanner
+        open={receiptOpen}
+        onClose={() => setReceiptOpen(false)}
+        onSaved={onBudgetPatch}
+        defaultDay={selDay}
+        weekInfo={weekInfo}
+        categoryLabels={labels}
+      />
     </div>
   );
 }
@@ -1891,7 +1946,7 @@ function MonthlyTab({ initMonth, initYear }) {
 export default function Dashboard({ monthly = false }) {
   const now = new Date();
   const navigate = useNavigate();
-  const { setHeaderActions } = useOutletContext() || {};
+  const { setHeaderActions, receiptOcrEnabled = false } = useOutletContext() || {};
   const { categories, setCustomCategories } = useCategories();
   const tab = monthly ? 'monthly' : 'weekly';
   const [screen, setScreen] = useState('setup');
@@ -2121,6 +2176,7 @@ export default function Dashboard({ monthly = false }) {
                 onItemDeleted={handleItemDeleted}
                 reviewItemId={reviewItemId}
                 onReviewHandled={finishAnomalyReview}
+                receiptOcrEnabled={receiptOcrEnabled}
               />
             )
       )}

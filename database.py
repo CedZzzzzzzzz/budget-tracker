@@ -1,6 +1,7 @@
 import calendar
 import hashlib
 import os
+import re
 import secrets
 import time
 from contextlib import contextmanager
@@ -27,6 +28,9 @@ MAX_TAGS_PER_ITEM = 8
 MAX_CUSTOM_CATEGORIES = 20
 MAX_CATEGORY_LABEL_LEN = 40
 MAX_CATEGORY_SLUG_LEN = 32
+MAX_CATEGORY_DESCRIPTION_LEN = 160
+MAX_CATEGORY_KEYWORDS = 20
+MAX_CATEGORY_KEYWORD_LEN = 40
 
 GMAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
 db_pool = None
@@ -1047,11 +1051,14 @@ def get_budget_by_week(user_id, week_start, week_end):
 
 
 def serialize_user_category(row):
+    keywords = row.get("keywords") or []
     return {
         "id": row["id"],
         "slug": row["slug"],
         "label": row["label"],
         "color": row["color"],
+        "description": row.get("description") or "",
+        "keywords": list(keywords),
         "created_at": str(row["created_at"]) if row.get("created_at") else None,
     }
 
@@ -1059,7 +1066,7 @@ def serialize_user_category(row):
 def get_user_categories(user_id):
     with db_cursor(dict_cursor=True) as cursor:
         cursor.execute(
-            "SELECT id, slug, label, color, created_at FROM user_categories "
+            "SELECT id, slug, label, color, description, keywords, created_at FROM user_categories "
             "WHERE user_id = %s ORDER BY label ASC, id ASC",
             (user_id,),
         )
@@ -1069,7 +1076,7 @@ def get_user_categories(user_id):
 def get_user_category(category_id, user_id):
     with db_cursor(dict_cursor=True) as cursor:
         cursor.execute(
-            "SELECT id, slug, label, color, created_at FROM user_categories "
+            "SELECT id, slug, label, color, description, keywords, created_at FROM user_categories "
             "WHERE id = %s AND user_id = %s",
             (category_id, user_id),
         )
@@ -1113,7 +1120,50 @@ def normalize_category_color(color):
     return value.lower()
 
 
-def create_user_category(user_id, label, color=None, slug=None):
+def normalize_category_description(description):
+    value = " ".join(str(description or "").split())
+    if len(value) > MAX_CATEGORY_DESCRIPTION_LEN:
+        raise ValueError(
+            f"Category description must be at most {MAX_CATEGORY_DESCRIPTION_LEN} characters."
+        )
+    return value
+
+
+def normalize_category_keywords(keywords):
+    if keywords is None:
+        raw = []
+    elif isinstance(keywords, str):
+        raw = re.split(r"[,;\n]", keywords)
+    elif isinstance(keywords, (list, tuple)):
+        raw = keywords
+    else:
+        raise ValueError("Category keywords must be a list or comma-separated string.")
+
+    cleaned = []
+    seen = set()
+    for keyword in raw:
+        value = " ".join(str(keyword or "").lower().split())
+        if not value or value in seen:
+            continue
+        if len(value) > MAX_CATEGORY_KEYWORD_LEN:
+            raise ValueError(
+                f"Each category keyword must be at most {MAX_CATEGORY_KEYWORD_LEN} characters."
+            )
+        seen.add(value)
+        cleaned.append(value)
+        if len(cleaned) > MAX_CATEGORY_KEYWORDS:
+            raise ValueError(f"At most {MAX_CATEGORY_KEYWORDS} category keywords are allowed.")
+    return cleaned
+
+
+def create_user_category(
+    user_id,
+    label,
+    color=None,
+    slug=None,
+    description="",
+    keywords=None,
+):
     from api.categorize import CATEGORIES
 
     label = (label or "").strip()
@@ -1123,6 +1173,8 @@ def create_user_category(user_id, label, color=None, slug=None):
         raise ValueError(f"Category name must be at most {MAX_CATEGORY_LABEL_LEN} characters.")
 
     color = normalize_category_color(color)
+    description = normalize_category_description(description)
+    keywords = normalize_category_keywords(keywords)
     base_slug = slugify_category_label(slug or label)
     if base_slug in CATEGORIES:
         raise ValueError("That name matches a built-in category. Choose a different name.")
@@ -1141,15 +1193,23 @@ def create_user_category(user_id, label, color=None, slug=None):
 
     with db_cursor(commit=True, dict_cursor=True) as cursor:
         cursor.execute(
-            "INSERT INTO user_categories (user_id, slug, label, color) "
-            "VALUES (%s, %s, %s, %s) "
-            "RETURNING id, slug, label, color, created_at",
-            (user_id, candidate, label, color),
+            "INSERT INTO user_categories "
+            "(user_id, slug, label, color, description, keywords) "
+            "VALUES (%s, %s, %s, %s, %s, %s) "
+            "RETURNING id, slug, label, color, description, keywords, created_at",
+            (user_id, candidate, label, color, description, keywords),
         )
         return serialize_user_category(dict(cursor.fetchone()))
 
 
-def update_user_category(category_id, user_id, label=None, color=None):
+def update_user_category(
+    category_id,
+    user_id,
+    label=None,
+    color=None,
+    description=None,
+    keywords=None,
+):
     existing = get_user_category(category_id, user_id)
     if not existing:
         return None
@@ -1167,6 +1227,12 @@ def update_user_category(category_id, user_id, label=None, color=None):
     if color is not None:
         fields.append("color = %s")
         params.append(normalize_category_color(color))
+    if description is not None:
+        fields.append("description = %s")
+        params.append(normalize_category_description(description))
+    if keywords is not None:
+        fields.append("keywords = %s")
+        params.append(normalize_category_keywords(keywords))
     if not fields:
         return existing
 
@@ -1175,7 +1241,7 @@ def update_user_category(category_id, user_id, label=None, color=None):
         cursor.execute(
             f"UPDATE user_categories SET {', '.join(fields)} "
             f"WHERE id = %s AND user_id = %s "
-            f"RETURNING id, slug, label, color, created_at",
+            f"RETURNING id, slug, label, color, description, keywords, created_at",
             params,
         )
         row = cursor.fetchone()
@@ -1921,6 +1987,105 @@ def add_expense_item(budget_id, day, expense_date, name, amount, category, notes
         return item, day, day_expense, budget_totals
 
 
+def add_expense_items_batch(
+    user_id,
+    budget_id,
+    day,
+    expense_date,
+    items,
+    idempotency_key,
+):
+    with db_transaction(dict_cursor=True) as cursor:
+        cursor.execute(
+            "SELECT id FROM users WHERE id = %s FOR UPDATE",
+            (user_id,),
+        )
+        if not cursor.fetchone():
+            return None
+        cursor.execute(
+            "SELECT budget_id, day FROM receipt_imports "
+            "WHERE user_id = %s AND idempotency_key = %s",
+            (user_id, idempotency_key),
+        )
+        existing_import = cursor.fetchone()
+        if existing_import:
+            existing_budget_id = existing_import["budget_id"]
+            existing_day = existing_import["day"]
+            cursor.execute(
+                "SELECT id FROM expenses WHERE budget_id = %s AND day = %s",
+                (existing_budget_id, existing_day),
+            )
+            expense_row = cursor.fetchone()
+            day_expense = (
+                day_expense_payload(cursor, expense_row["id"])
+                if expense_row else None
+            )
+            budget_totals = compute_budget_totals(cursor, existing_budget_id)
+            return {
+                "duplicate": True,
+                "day": existing_day,
+                "expense": day_expense,
+                "totals": budget_totals,
+                "items": [],
+            }
+
+        cursor.execute(
+            "SELECT id FROM budgets WHERE id = %s AND user_id = %s FOR UPDATE",
+            (budget_id, user_id),
+        )
+        if not cursor.fetchone():
+            return None
+
+        cursor.execute(
+            "SELECT id FROM expenses WHERE budget_id = %s AND day = %s FOR UPDATE",
+            (budget_id, day),
+        )
+        expense_row = cursor.fetchone()
+        if expense_row:
+            expense_id = expense_row["id"]
+        else:
+            cursor.execute(
+                "INSERT INTO expenses "
+                "(budget_id, day, expense_date, fare, food, other, total) "
+                "VALUES (%s, %s, %s, 0, 0, 0, 0) RETURNING id",
+                (budget_id, day, expense_date),
+            )
+            expense_id = cursor.fetchone()["id"]
+
+        inserted = []
+        for item in items:
+            cursor.execute(
+                "INSERT INTO expense_items "
+                "(expense_id, name, amount, category, notes, tags) "
+                "VALUES (%s, %s, %s, %s, %s, %s) "
+                "RETURNING id, name, amount, category, notes, tags",
+                (
+                    expense_id,
+                    item["name"],
+                    item["amount"],
+                    item["category"],
+                    item.get("notes") or "",
+                    item.get("tags") or [],
+                ),
+            )
+            inserted.append(expense_item_dict(dict(cursor.fetchone())))
+
+        update_expense_total(cursor, expense_id)
+        cursor.execute(
+            "INSERT INTO receipt_imports "
+            "(user_id, idempotency_key, budget_id, day, item_count) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (user_id, idempotency_key, budget_id, day, len(inserted)),
+        )
+        return {
+            "duplicate": False,
+            "day": day,
+            "expense": day_expense_payload(cursor, expense_id),
+            "totals": compute_budget_totals(cursor, budget_id),
+            "items": inserted,
+        }
+
+
 def delete_expense_item(item_id, user_id):
     if not expense_item_belongs_to_user(item_id, user_id):
         return False, None, None, None, None
@@ -2011,7 +2176,7 @@ def get_account_export_snapshot(user_id):
         expense_items = [dict(row) for row in cursor.fetchall()]
 
         cursor.execute(
-            "SELECT slug, label, color, created_at FROM user_categories "
+            "SELECT slug, label, color, description, keywords, created_at FROM user_categories "
             "WHERE user_id = %s ORDER BY label, slug",
             (user_id,),
         )
@@ -2224,13 +2389,18 @@ def get_spending_anomaly_candidates(user_id, start_date, end_date, history_start
 
 
 def learn_category_correction(user_id, name, category):
-    from api.categorize import categorize_item, extract_learn_patterns
+    from api.categorize import extract_learn_patterns
+    from api.category_service import build_category_context, classify_category
 
     allowed = set(allowed_category_slugs(user_id))
     if category not in allowed:
         return
     user_rules = get_user_category_rules(user_id)
-    suggested = categorize_item(name, user_rules, allowed_categories=allowed)
+    suggested = classify_category(
+        name,
+        user_rules=user_rules,
+        category_context=build_category_context(get_user_categories(user_id)),
+    )["category"]
     if suggested == category:
         return
 

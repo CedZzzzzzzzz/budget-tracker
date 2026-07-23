@@ -212,6 +212,8 @@ export default function BudgetSetup() {
 
   const [customLabel, setCustomLabel] = useState('');
   const [customColor, setCustomColor] = useState(CUSTOM_CATEGORY_COLORS[0]);
+  const [customDescription, setCustomDescription] = useState('');
+  const [customKeywords, setCustomKeywords] = useState('');
   const [customSaving, setCustomSaving] = useState(false);
   const [customError, setCustomError] = useState('');
   const [customMessage, setCustomMessage] = useState('');
@@ -413,6 +415,8 @@ export default function BudgetSetup() {
     setCustomError('');
     setCustomMessage('');
     setCustomLabel('');
+    setCustomDescription('');
+    setCustomKeywords('');
   };
 
   const addCustomCategory = async () => {
@@ -427,7 +431,12 @@ export default function BudgetSetup() {
     try {
       const res = await apiFetch('/api/user-categories', {
         method: 'POST',
-        body: JSON.stringify({ label: name, color: customColor }),
+        body: JSON.stringify({
+          label: name,
+          color: customColor,
+          description: customDescription,
+          keywords: customKeywords,
+        }),
       });
       const { data, ok } = await parseApiResponse(res);
       if (!ok) {
@@ -436,6 +445,8 @@ export default function BudgetSetup() {
       }
       setCustomCategories(data.custom_categories || []);
       setCustomLabel('');
+      setCustomDescription('');
+      setCustomKeywords('');
       setCustomColor(CUSTOM_CATEGORY_COLORS[(customCategories.length + 1) % CUSTOM_CATEGORY_COLORS.length]);
       setCustomMessage(`Added “${data.category?.label || name}”.`);
     } catch {
@@ -978,7 +989,11 @@ export default function BudgetSetup() {
                           }}
                           aria-hidden="true"
                         />
-                        <p className="truncate text-sm font-medium text-purple-text">{cat.label}</p>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-purple-text">{cat.label}</p>
+                          {cat.description && <p className="mt-0.5 truncate text-xs text-purple-muted">{cat.description}</p>}
+                          {cat.keywords?.length > 0 && <p className="mt-0.5 truncate text-[11px] text-purple-muted">{cat.keywords.join(', ')}</p>}
+                        </div>
                       </div>
                       <button
                         type="button"
@@ -1004,6 +1019,26 @@ export default function BudgetSetup() {
                     autoFocus
                     onKeyDown={(e) => e.key === 'Enter' && addCustomCategory()}
                   />
+                </div>
+                <div>
+                  <label className={label}>Description</label>
+                  <input
+                    className={input}
+                    value={customDescription}
+                    onChange={(e) => setCustomDescription(e.target.value)}
+                    placeholder="What belongs in this category?"
+                    maxLength={160}
+                  />
+                </div>
+                <div>
+                  <label className={label}>Keywords</label>
+                  <input
+                    className={input}
+                    value={customKeywords}
+                    onChange={(e) => setCustomKeywords(e.target.value)}
+                    placeholder="vet, dog food, pet supplies"
+                  />
+                  <p className="mt-1 text-[11px] text-purple-muted">Separate up to 20 matching phrases with commas.</p>
                 </div>
                 <div>
                   <label className={label}>Color</label>

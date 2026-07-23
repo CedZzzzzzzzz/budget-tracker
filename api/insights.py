@@ -10,7 +10,7 @@ from api.errors import GEMINI_ERRORS
 
 logger = logging.getLogger(__name__)
 
-INSIGHT_MODEL = "gemini-2.5-flash-lite"
+INSIGHT_MODEL = os.environ.get("GEMINI_AI_INSIGHT_MODEL", "gemini-3.5-flash-lite")
 GEMINI_TIMEOUT_SEC = float(os.environ.get("GEMINI_AI_INSIGHT_TIMEOUT", "2.5"))
 
 PROMPT = (
@@ -155,33 +155,30 @@ def parse_gemini_lines(text):
 
 
 def call_gemini(api_key, prompt_text, timeout=GEMINI_TIMEOUT_SEC):
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
 
     def run():
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(INSIGHT_MODEL)
+        client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(timeout=int(max(timeout, 1.0) * 1000)),
+        )
         try:
-            from google.api_core import retry as google_retry
-            request_options = {
-                "timeout": max(timeout, 1.0),
-                "retry": google_retry.Retry(
-                    predicate=lambda exc: False,
-                    initial=0,
-                    maximum=0,
-                    multiplier=1,
-                    deadline=timeout,
-                ),
-            }
-        except Exception:
-            request_options = {"timeout": max(timeout, 1.0)}
-
-        response = model.generate_content(prompt_text, request_options=request_options)
-        lines = parse_gemini_lines(getattr(response, "text", "") or "")
-        if len(lines) < 1:
-            raise ValueError("Gemini returned no insight lines")
-        while len(lines) < 3:
-            lines.append(GENERIC_FALLBACK[len(lines)])
-        return lines[:3]
+            response = client.models.generate_content(
+                model=INSIGHT_MODEL,
+                contents=prompt_text,
+            )
+            lines = parse_gemini_lines(getattr(response, "text", "") or "")
+            if len(lines) < 1:
+                raise ValueError("Gemini returned no insight lines")
+            while len(lines) < 3:
+                lines.append(GENERIC_FALLBACK[len(lines)])
+            return lines[:3]
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
 
     pool = ThreadPoolExecutor(max_workers=1)
     future = pool.submit(run)

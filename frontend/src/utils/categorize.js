@@ -2,6 +2,7 @@ import data from '@shared/categories.json';
 
 export const CATEGORIES = data.categories;
 export const CATEGORY_LABELS = data.labels;
+export const CATEGORY_DESCRIPTIONS = data.descriptions || {};
 export const CATEGORY_ICONS = data.icons;
 export const CATEGORY_COLORS = data.colors;
 

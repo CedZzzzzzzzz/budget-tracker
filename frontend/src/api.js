@@ -92,7 +92,8 @@ export async function parseApiResponse(res) {
 export async function apiFetch(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
   const headers = { ...options.headers };
-  if (options.body && !headers['Content-Type']) {
+  const multipart = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  if (options.body && !multipart && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
 

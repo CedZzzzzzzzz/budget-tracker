@@ -77,6 +77,7 @@ MIGRATIONS = [
     ("013_email_verification", lambda cursor: execute_sql_file(cursor, "012_email_verification.sql")),
     ("014_admin_dashboard", lambda cursor: execute_sql_file(cursor, "013_admin_dashboard.sql")),
     ("015_admin_support_tools", lambda cursor: execute_sql_file(cursor, "014_admin_support_tools.sql")),
+    ("016_receipt_ocr_categories", lambda cursor: execute_sql_file(cursor, "015_receipt_ocr_categories.sql")),
 ]
 
 

@@ -38,6 +38,8 @@ A modern, full-stack web application for tracking weekly and monthly expenses wi
 - **Mobile Responsive** - Hamburger menu and optimized layout for phones
 - **Intuitive Design** - Modern purple-themed UI with smooth animations
 - **Fast & Smooth** - Optimized performance with minimal load times
+- **Receipt Scanning** - Capture or upload a receipt, review extracted items, and save them atomically
+- **Flexible Categories** - Classify against all built-in and user-created categories
 
 ### Export & Reports
 - **Weekly PDF Export** - Download detailed reports for any week
@@ -113,7 +115,15 @@ SECRET_KEY=your-secret-key-here
 # Optional — in-app + PDF AI insights (tries primary, then secondary)
 GEMINI_AI_INSIGHT_API_KEY=your-gemini-key
 GEMINI_AI_INSIGHT_API_KEY_SECONDARY=your-second-gemini-key
+RECEIPT_OCR_ENABLED=true
+GEMINI_RECEIPT_API_KEY=your-dedicated-receipt-key
+GEMINI_RECEIPT_MODEL=gemini-3.5-flash-lite
 ```
+
+Receipt scanning is disabled unless `RECEIPT_OCR_ENABLED` is true and a dedicated
+receipt key is configured. Optional limits include `RECEIPT_OCR_TIMEOUT_SECONDS`,
+`RECEIPT_OCR_MAX_BYTES`, `RECEIPT_OCR_MAX_PIXELS`, `RECEIPT_OCR_MAX_DIMENSION`, and
+`RECEIPT_OCR_CONCURRENCY`.
 
 **5. Run the application**
 ```bash

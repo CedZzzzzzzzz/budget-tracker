@@ -19,6 +19,16 @@
     "health": "Health",
     "other": "Other"
   },
+  "descriptions": {
+    "fare": "Public transport, ride services, fuel, parking, tolls, and travel fares",
+    "food": "Prepared meals, restaurants, drinks, snacks, cafes, and food delivery",
+    "groceries": "Food ingredients, household supplies, toiletries, and supermarket purchases",
+    "bills": "Rent, utilities, tuition, connectivity, mobile load, and recurring household bills",
+    "shopping": "Clothing, electronics, accessories, cosmetics, home goods, and general retail",
+    "entertainment": "Streaming, games, events, recreation, tickets, and leisure activities",
+    "health": "Medicine, medical care, dental care, optical care, wellness, and insurance",
+    "other": "Purchases that do not clearly belong to another available category"
+  },
   "icons": {
     "fare": "bus",
     "food": "utensils",

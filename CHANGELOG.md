@@ -2,6 +2,39 @@
 
 All notable changes to Budget Tracker are documented in this file.
 
+## [0.4.0] - 2026-07-23
+
+### Added
+
+- Added mobile camera capture and desktop image upload for receipt scanning.
+- Added schema-validated receipt extraction for merchant, date, total, and line items.
+- Added a responsive review flow with total-only and itemized entry modes.
+- Added atomic, idempotent batch expense creation for confirmed receipt items.
+- Added custom-category descriptions and keywords for better classification coverage.
+- Itemized receipt expenses retain the merchant in each saved item's notes.
+
+### Changed
+
+- Manual and receipt expense entry now use one server-authoritative classifier that
+  considers every built-in and user-created category.
+- Migrated Gemini integrations from the retired `google-generativeai` package to the
+  supported `google-genai` SDK.
+- Updated Gemini defaults to the production-ready `gemini-3.5-flash-lite` model.
+
+### Security
+
+- Receipt uploads are authenticated, CSRF-protected, rate-limited, signature-validated,
+  pixel-limited, concurrency-bounded, decoded, re-encoded without metadata, and
+  processed without storage.
+- Provider output is treated as untrusted, validated against a strict schema, and cannot
+  create expenses without user confirmation.
+- Receipt responses disable browser caching and exclude images, raw OCR text, and
+  provider responses.
+
+### Documentation
+
+- Added the receipt scanning system-design plan and deployment/user guide.
+
 ## [0.3.0] - 2026-07-23
 
 ### Added

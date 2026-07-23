@@ -8,7 +8,9 @@ import logging
 import os
 import secrets
 import time
-from api.categorize import categorize_item, CATEGORY_LABELS, CATEGORIES
+import uuid
+from api.categorize import CATEGORIES
+from api.category_service import build_category_context, classify_category
 from api.security import issue_csrf_token, verify_request_origin
 from api.email_service import (
     delivery_transport_name,
@@ -23,6 +25,10 @@ from api.insights import build_insights, generate_budget_insights
 from api.anomalies import HISTORY_WINDOW_DAYS, build_anomaly_report
 from api.account_export import build_account_export
 from api.pdf_report import build_monthly_pdf, build_yearly_pdf, build_range_pdf, pdf_response
+from api.receipt_providers.base import ReceiptProviderError, ReceiptProviderUnavailable
+from api.receipt_providers import GeminiReceiptProvider
+from api.receipt_schema import MAX_RECEIPT_ITEMS, ReceiptSchemaError, money_value
+from api.receipt_service import ReceiptBusyError, ReceiptUploadError, extract_receipt
 from extensions import limiter
 
 logger = logging.getLogger(__name__)
@@ -73,6 +79,12 @@ MAX_ADMIN_SEARCH_LEN = 100
 MAX_ADMIN_REASON_LEN = 250
 ADMIN_PAGE_SIZE = 20
 ADMIN_MAX_PAGE_SIZE = 50
+RECEIPT_SCAN_LIMIT = (
+    "30 per hour"
+    if os.environ.get("FLASK_ENV", "development") != "production"
+    else "10 per hour"
+)
+RECEIPT_BATCH_LIMIT = "20 per hour"
 
 
 def parse_item_notes_tags(data):
@@ -82,6 +94,13 @@ def parse_item_notes_tags(data):
     except ValueError as exc:
         return None, None, str(exc)
     return notes, tags, None
+
+
+def receipt_ocr_available():
+    return bool(
+        current_app.config.get("RECEIPT_OCR_ENABLED", False)
+        and GeminiReceiptProvider.configured_api_key()
+    )
 
 
 DAYS_MAP = {
@@ -151,8 +170,11 @@ def admin_rate_limit_key():
 
 
 @api.after_request
-def protect_admin_responses(response):
-    if request.path.startswith("/api/admin"):
+def protect_sensitive_responses(response):
+    if (
+        request.path.startswith("/api/admin")
+        or request.path.startswith("/api/receipt-scans")
+    ):
         response.headers["Cache-Control"] = "no-store, max-age=0"
         response.headers["Pragma"] = "no-cache"
     return response
@@ -264,7 +286,11 @@ def resolve_category(user_id, category, name=""):
     if category in allowed:
         return category
     user_rules = db.get_user_category_rules(user_id)
-    return categorize_item(name, user_rules, allowed_categories=allowed)
+    return classify_category(
+        name,
+        user_rules=user_rules,
+        category_context=build_category_context(db.get_user_categories(user_id)),
+    )["category"]
 
 
 def build_expenses_payload(rows, items_by_expense, categories=None):
@@ -692,6 +718,7 @@ def login():
             user.get("role") == "admin"
             and current_app.config.get("ADMIN_DASHBOARD_ENABLED", True)
         ),
+        "receipt_ocr_enabled": receipt_ocr_available(),
     })
 
 
@@ -724,6 +751,7 @@ def check_auth():
             state.get("role") == "admin"
             and current_app.config.get("ADMIN_DASHBOARD_ENABLED", True)
         ),
+        "receipt_ocr_enabled": receipt_ocr_available(),
     })
 
 
@@ -1412,21 +1440,208 @@ def set_allowance():
 @login_required
 @handle_api_errors
 def categorize_item_route():
-        data = request.get_json()
-        name = (data.get("name") or "").strip()
-        if not name:
-            return jsonify({"error": "Item name is required"}), 400
-        if len(name) > MAX_ITEM_NAME_LEN:
-            return jsonify({"error": f"Item name must be at most {MAX_ITEM_NAME_LEN} characters."}), 400
-        user_id = get_user_id()
-        user_rules = db.get_user_category_rules(user_id)
-        allowed = db.allowed_category_slugs(user_id)
-        category = categorize_item(name, user_rules, allowed_categories=allowed)
-        labels = db.category_labels_for_user(user_id)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid item."}), 400
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Item name is required"}), 400
+    if len(name) > MAX_ITEM_NAME_LEN:
+        return jsonify({"error": f"Item name must be at most {MAX_ITEM_NAME_LEN} characters."}), 400
+    user_id = get_user_id()
+    user_rules = db.get_user_category_rules(user_id)
+    context = build_category_context(db.get_user_categories(user_id))
+    result = classify_category(
+        name,
+        user_rules=user_rules,
+        category_context=context,
+    )
+    category = result["category"]
+    labels = db.category_labels_for_user(user_id)
+    return jsonify({
+        "category": category,
+        "label": labels.get(category, category),
+        "confidence": result["confidence"],
+        "needs_review": result["needs_review"],
+        "source": result["source"],
+    })
+
+
+@api.route("/receipt-scans/extract", methods=["POST"])
+@login_required
+@limiter.limit(RECEIPT_SCAN_LIMIT)
+@handle_api_errors
+def extract_receipt_route():
+    if not current_app.config.get("RECEIPT_OCR_ENABLED", False):
+        return jsonify({"error": "Receipt scanning is not available."}), 503
+    receipt_file = request.files.get("receipt")
+    if receipt_file is None:
+        return jsonify({"error": "Choose a receipt image to scan."}), 400
+
+    user_id = get_user_id()
+    categories = db.get_user_categories(user_id)
+    context = build_category_context(categories)
+    started_at = time.perf_counter()
+    request_id = secrets.token_hex(8)
+    try:
+        receipt = extract_receipt(
+            receipt_file,
+            context,
+            user_rules=db.get_user_category_rules(user_id),
+        )
+    except ReceiptUploadError as error:
+        return jsonify({"error": str(error)}), 400
+    except ReceiptSchemaError:
         return jsonify({
+            "error": "The receipt could not be read reliably. Try a clearer photo.",
+        }), 422
+    except ReceiptProviderUnavailable:
+        return jsonify({"error": "Receipt scanning is temporarily unavailable."}), 503
+    except ReceiptBusyError:
+        return jsonify({
+            "error": "Receipt scanning is busy. Please try again in a moment.",
+        }), 503
+    except ReceiptProviderError as error:
+        cause = error.__cause__ or error
+        logger.warning(
+            "Receipt extraction failed request_id=%s user_id=%s outcome=provider_error "
+            "status=%s error_type=%s",
+            request_id,
+            user_id,
+            getattr(cause, "status_code", getattr(cause, "code", "unknown")),
+            type(cause).__name__,
+        )
+        return jsonify({"error": "Receipt scanning failed. Please try again."}), 502
+
+    image_meta = receipt["image"]
+    logger.info(
+        "Receipt extraction completed request_id=%s user_id=%s input_bytes=%s "
+        "width=%s height=%s elapsed_ms=%.1f item_count=%s reconciled=%s",
+        request_id,
+        user_id,
+        image_meta["input_bytes"],
+        image_meta["width"],
+        image_meta["height"],
+        (time.perf_counter() - started_at) * 1000,
+        len(receipt["items"]),
+        receipt["reconciled"],
+    )
+    response = jsonify({
+        "receipt": {
+            key: value
+            for key, value in receipt.items()
+            if key not in ("items", "warnings", "image")
+        },
+        "items": receipt["items"],
+        "warnings": receipt["warnings"],
+        "mode": receipt["mode"],
+        "categories": [
+            {"slug": row["slug"], "label": row["label"]}
+            for row in context
+        ],
+    })
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
+
+
+@api.route("/expense-items/batch", methods=["POST"])
+@login_required
+@limiter.limit(RECEIPT_BATCH_LIMIT)
+@handle_api_errors
+def add_expense_items_batch_route():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid receipt items."}), 400
+    idempotency_key = (request.headers.get("Idempotency-Key") or "").strip()
+    try:
+        parsed_key = str(uuid.UUID(idempotency_key))
+    except (ValueError, AttributeError):
+        return jsonify({"error": "A valid idempotency key is required."}), 400
+
+    day = data.get("day")
+    raw_items = data.get("items")
+    if day not in DAYS_MAP:
+        return jsonify({"error": "Choose a valid day."}), 400
+    if not isinstance(raw_items, list) or not raw_items:
+        return jsonify({"error": "Add at least one receipt item."}), 400
+    if len(raw_items) > MAX_RECEIPT_ITEMS:
+        return jsonify({"error": f"At most {MAX_RECEIPT_ITEMS} receipt items are allowed."}), 400
+
+    user_id = get_user_id()
+    allowed = set(db.allowed_category_slugs(user_id))
+    items = []
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            return jsonify({"error": "Invalid receipt item."}), 400
+        name = (raw.get("name") or "").strip()
+        if not name or len(name) > MAX_ITEM_NAME_LEN:
+            return jsonify({
+                "error": f"Each item name must be between 1 and {MAX_ITEM_NAME_LEN} characters.",
+            }), 400
+        try:
+            amount = money_value(raw.get("amount"), required=True)
+        except ReceiptSchemaError:
+            return jsonify({"error": "Each receipt amount must be valid."}), 400
+        if amount <= 0:
+            return jsonify({"error": "Each receipt amount must be greater than 0."}), 400
+        category = (raw.get("category") or "").strip().lower()
+        if category not in allowed:
+            return jsonify({
+                "error": "A selected category is no longer available. Review the receipt again.",
+            }), 409
+        notes, tags, meta_error = parse_item_notes_tags(raw)
+        if meta_error:
+            return jsonify({"error": meta_error}), 400
+        items.append({
+            "name": name,
+            "amount": amount,
             "category": category,
-            "label": labels.get(category, category),
+            "notes": notes,
+            "tags": tags,
         })
+
+    week_start, week_end = get_week_range()
+    budget = db.get_budget_by_week(user_id, week_start, week_end)
+    if not budget:
+        return jsonify({"error": "Please set allowance first."}), 404
+    expense_date = week_start + timedelta(days=DAYS_MAP[day])
+    result = db.add_expense_items_batch(
+        user_id,
+        budget["id"],
+        day,
+        expense_date,
+        items,
+        parsed_key,
+    )
+    if result is None:
+        return jsonify({"error": "Budget not found."}), 404
+
+    if not result["duplicate"]:
+        for item in items:
+            try:
+                db.learn_category_correction(
+                    user_id,
+                    item["name"],
+                    item["category"],
+                )
+            except Exception as error:
+                logger.warning(
+                    "Receipt category learning failed error=%s",
+                    type(error).__name__,
+                )
+
+    payload = mutation_payload(
+        result["day"],
+        result["expense"],
+        result["totals"],
+        user_id,
+    )
+    return jsonify({
+        **payload,
+        "items": result["items"],
+        "duplicate": result["duplicate"],
+    })
 
 
 @api.route("/add-expense-item", methods=["POST"])
@@ -1758,6 +1973,8 @@ def create_user_category_route():
             user_id,
             label=data.get("label") or data.get("name"),
             color=data.get("color"),
+            description=data.get("description", ""),
+            keywords=data.get("keywords"),
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -1781,6 +1998,10 @@ def update_user_category_route(category_id):
         fields["label"] = data.get("label") if "label" in data else data.get("name")
     if "color" in data:
         fields["color"] = data.get("color")
+    if "description" in data:
+        fields["description"] = data.get("description")
+    if "keywords" in data:
+        fields["keywords"] = data.get("keywords")
     try:
         category = db.update_user_category(category_id, user_id, **fields)
     except ValueError as exc:

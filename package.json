@@ -1,5 +1,5 @@
 {
-  "version": "0.3.0",
+  "version": "0.4.0",
   "scripts": {
     "test": "npm run test:backend && npm run test:frontend",
     "test:backend": "python -m pytest",

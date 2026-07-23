@@ -11,6 +11,12 @@ class Config:
     ADMIN_DASHBOARD_ENABLED = os.environ.get("ADMIN_DASHBOARD_ENABLED", "true").strip().lower() in (
         "1", "true", "yes", "on"
     )
+    RECEIPT_OCR_ENABLED = os.environ.get("RECEIPT_OCR_ENABLED", "false").strip().lower() in (
+        "1", "true", "yes", "on"
+    )
+    MAX_CONTENT_LENGTH = int(os.environ.get("MAX_CONTENT_LENGTH", str(10 * 1024 * 1024)))
+    MAX_FORM_MEMORY_SIZE = int(os.environ.get("MAX_FORM_MEMORY_SIZE", str(9 * 1024 * 1024)))
+    MAX_FORM_PARTS = int(os.environ.get("MAX_FORM_PARTS", "8"))
     DEBUG = True
 
 class ProductionConfig(Config):

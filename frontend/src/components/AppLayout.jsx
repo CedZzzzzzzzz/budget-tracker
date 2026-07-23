@@ -141,6 +141,7 @@ export default function AppLayout() {
   const [authReady, setAuthReady] = useState(false);
   const [onboardingCompleted, setOnboardingCompleted] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [receiptOcrEnabled, setReceiptOcrEnabled] = useState(false);
   const [darkMode, setDarkMode] = useState(localStorage.getItem('darkMode') !== 'false');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [headerActions, setHeaderActions] = useState(null);
@@ -171,6 +172,7 @@ export default function AppLayout() {
         if (d.username) setUsername(d.username);
         setOnboardingCompleted(Boolean(d.onboarding_completed));
         setIsAdmin(Boolean(d.is_admin));
+        setReceiptOcrEnabled(Boolean(d.receipt_ocr_enabled));
         setAuthReady(true);
       })
       .catch(() => {
@@ -197,8 +199,9 @@ export default function AppLayout() {
       markOnboardingDone: () => setOnboardingCompleted(true),
       onboardingActive: tourActive,
       isAdmin,
+      receiptOcrEnabled,
     }),
-    [username, tourActive, isAdmin],
+    [username, tourActive, isAdmin, receiptOcrEnabled],
   );
 
   if (!authReady) {
