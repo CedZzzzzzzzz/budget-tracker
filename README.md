@@ -1,239 +1,202 @@
-#  Budget Tracker
+# Budget Tracker App
 
-A modern, full-stack web application for tracking weekly and monthly expenses with user authentication, PDF export, mobile-responsive design, and dark/light mode support.
+A full-stack web application for personal expense tracking, weekly allowance management, receipt OCR scanning, spending analytics, and PDF report generation.
 
-![Budget Tracker](https://img.shields.io/badge/status-live-success)
-![Python](https://img.shields.io/badge/python-3.12-blue)
-![Flask](https://img.shields.io/badge/flask-3.0.0-green)
-![PostgreSQL](https://img.shields.io/badge/postgresql-enabled-blue)
-![Mobile](https://img.shields.io/badge/mobile-responsive-purple)
+[![Status](https://img.shields.io/badge/status-live-success?style=for-the-badge)](https://balaze.netlify.app)
+[![Python](https://img.shields.io/badge/python-3.12-blue?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Flask](https://img.shields.io/badge/flask-3.0.0-green?style=for-the-badge&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
+[![PostgreSQL](https://img.shields.io/badge/postgresql-enabled-blue?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Mobile](https://img.shields.io/badge/mobile-responsive-purple?style=for-the-badge)](https://balaze.netlify.app)
 
-##  Live Demo
+---
 
-**[https://budget-trackerr.up.railway.app](https://budget-trackerr.up.railway.app)**
+## Live Demo
 
-##  Features
+Live application: **[https://balaze.netlify.app](https://balaze.netlify.app)**
 
-###  Budget Management
-- **Weekly Allowance Tracking** - Set your budget for the week (Sunday to Saturday)
-- **Daily Expense Logging** - Track expenses by category: Fare, Food, Other
-- **Smart Day Selection** - Only log expenses for past and current days
-- **Real-time Progress** - Visual progress bar showing budget usage
-- **Budget Warnings** - Alerts when you exceed your weekly allowance
+---
 
-### Analytics & Insights
-- **Weekly Summary** - Detailed breakdown of all expenses by day
-- **Monthly Overview** - Aggregate view of spending across multiple weeks
-- **Category Breakdown** - See spending patterns by category
-- **Savings Tracker** - Track how much you saved each week
+## Overview
 
-###  Security & Authentication
-- **Secure User Registration** - Email validation and strong password requirements
-- **Session Management** - Secure login/logout with Flask sessions
-- **Password Hashing** - Werkzeug security for password protection
-- **Protected Routes** - Authentication required for budget access
+Budget Tracker App is a web-based financial dashboard for managing weekly budgets, tracking daily expenses, scanning physical receipts, and exporting monthly PDF reports.
 
-###  User Experience
-- **Dark/Light Mode** - Toggle between themes with persistent preference
-- **Mobile Responsive** - Hamburger menu and optimized layout for phones
-- **Intuitive Design** - Modern purple-themed UI with smooth animations
-- **Fast & Smooth** - Optimized performance with minimal load times
-- **Receipt Scanning** - Capture or upload a receipt, review extracted items, and save them atomically
-- **Flexible Categories** - Classify against all built-in and user-created categories
+---
 
-### Export & Reports
-- **Weekly PDF Export** - Download detailed reports for any week
-- **Monthly PDF Export** - Comprehensive monthly summaries
-- **Professional Formatting** - Clean, printable PDF documents
+## Features
 
-###  Data Management
-- **PostgreSQL Database** - Reliable, persistent data storage
-- **Per-User Isolation** - Each user sees only their own budget data
-- **Week-based Organization** - Automatic weekly budget periods
-- **Data Persistence** - Never lose your expense history
+### Budget Management and Expense Logging
+- **Weekly Allowance Tracking**: Set a weekly budget target for Sunday through Saturday.
+- **Daily Expense Logging**: Record costs across default categories (Fare, Food, Other) or custom categories.
+- **Date Validation**: Restrict logs for future dates while allowing retro-active logging for earlier days.
+- **Visual Progress Indicators**: Progress bar updates dynamically as expenses accumulate relative to weekly allowance.
+- **Allowance Alerts**: Receive notifications when spending exceeds the set allowance.
 
-##  Tech Stack
+### Receipt OCR Scanning
+- **Image Capture and Upload**: Upload receipt files or take photos directly on mobile or desktop devices.
+- **Gemini OCR Processing**: Extract total amounts, merchant details, line items, and transaction dates automatically.
+- **Log Review**: Review and edit parsed items before saving entries to the database.
 
-### Frontend
-- HTML, CSS, JavaScript
-- Custom CSS Variables for theming
-- Responsive Grid & Flexbox
-- Smooth CSS animations
+### Analytics and Insights
+- **Spending Breakdowns**: View weekly and monthly summaries grouped by category and day.
+- **Automated Summary Analysis**: Generate text summaries of spending patterns via Gemini API integration.
+- **Savings Calculation**: Calculate remaining allowance and total savings per week.
 
-### Backend
-- Python 3.12
-- Flask 3.0.0
-- PostgreSQL
-- psycopg2
-- Werkzeug
+### PDF Exports
+- **Downloadable Reports**: Generate print-ready PDF files for weekly or monthly expense history.
+- **Optional Analysis**: Include financial summary text directly within the exported PDF.
 
-### Deployment
-- Railway
-- Gunicorn
-- Git & GitHub
+### Security and Authentication
+- **Per-User Isolation**: Database structure enforces isolation so each user accesses only their data.
+- **Password Policies**: Enforce minimum complexity requirements using Werkzeug password hashing.
+- **Session Management**: Session control with security headers and API rate limiting.
+- **Email Verification and Admin CLI**: CLI commands for administrator account creation and role updates.
 
-### Additional Libraries
-- ReportLab 4.0.7
-- Flask-CORS
-- python-dotenv
+### User Interface
+- **Theme Toggle**: Switch between Dark Mode and Light Mode with persistent browser storage.
+- **Mobile Responsive**: Navigation drawer menu for mobile and tablet screens.
 
-##  Prerequisites
+---
+
+## Tech Stack
+
+| Component | Technologies |
+| :--- | :--- |
+| **Frontend** | HTML5, CSS3 (Custom CSS variables), JavaScript (ES6+), FontAwesome |
+| **Backend** | Python 3.12, Flask 3.0.0, Werkzeug, Flask-CORS, Flask-Limiter, Gunicorn |
+| **Database** | PostgreSQL, `psycopg2` |
+| **OCR & AI** | Google Gemini API (Receipt OCR and spending summaries) |
+| **Reporting** | ReportLab (PDF generation) |
+| **Deployment & CI** | Railway, Netlify, GitHub Actions |
+
+---
+
+## Getting Started
+
+### Prerequisites
 
 - Python 3.12 or higher
-- PostgreSQL
-- pip
+- PostgreSQL server
+- Node.js and npm (for frontend checks and tests)
 - Git
 
-##  Installation
+---
 
-### Local Development
+### Installation
 
-**1. Clone the repository**
-```bash
-git clone https://github.com/yourusername/BudgetTrackerApp.git
-cd BudgetTrackerApp
-```
+1. **Clone the Repository**
+   ```bash
+   git clone https://github.com/yourusername/BudgetTrackerApp.git
+   cd BudgetTrackerApp
+   ```
 
-**2. Create virtual environment**
-```bash
-python -m venv venv
-venv\Scripts\activate
-```
+2. **Set Up Virtual Environment**
+   - **Windows:**
+     ```cmd
+     python -m venv venv
+     venv\Scripts\activate
+     ```
+   - **macOS/Linux:**
+     ```bash
+     python3 -m venv venv
+     source venv/bin/activate
+     ```
 
-**3. Install dependencies**
-```bash
-pip install -r requirements.txt
-```
+3. **Install Dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-**4. Set up environment variables**
+4. **Configure Environment Variables**  
+   Create a `.env` file in the root directory:
+   ```env
+   DATABASE_URL=postgresql://postgres:your_password@localhost:5432/budget_tracker
+   FLASK_ENV=development
+   SECRET_KEY=your-secret-key
+   
+   # Optional: Gemini API Keys
+   GEMINI_AI_INSIGHT_API_KEY=your-gemini-key
+   GEMINI_AI_INSIGHT_API_KEY_SECONDARY=your-secondary-gemini-key
+   
+   # Optional: Receipt OCR
+   RECEIPT_OCR_ENABLED=true
+   GEMINI_RECEIPT_API_KEY=your-dedicated-receipt-key
+   GEMINI_RECEIPT_MODEL=gemini-2.5-flash
+   ```
 
-Create `.env` file:
-```env
-DATABASE_URL=postgresql://postgres:your_password@localhost:5000/budget_tracker
-FLASK_ENV=development
-SECRET_KEY=your-secret-key-here
-# Optional — in-app + PDF AI insights (tries primary, then secondary)
-GEMINI_AI_INSIGHT_API_KEY=your-gemini-key
-GEMINI_AI_INSIGHT_API_KEY_SECONDARY=your-second-gemini-key
-RECEIPT_OCR_ENABLED=true
-GEMINI_RECEIPT_API_KEY=your-dedicated-receipt-key
-GEMINI_RECEIPT_MODEL=gemini-3.5-flash-lite
-```
+5. **Run the Application**
+   ```bash
+   python app.py
+   ```
+   Access the app at `http://localhost:5000`.
 
-Receipt scanning is disabled unless `RECEIPT_OCR_ENABLED` is true and a dedicated
-receipt key is configured. Optional limits include `RECEIPT_OCR_TIMEOUT_SECONDS`,
-`RECEIPT_OCR_MAX_BYTES`, `RECEIPT_OCR_MAX_PIXELS`, `RECEIPT_OCR_MAX_DIMENSION`, and
-`RECEIPT_OCR_CONCURRENCY`.
-
-**5. Run the application**
-```bash
-python app.py
-```
-
-Visit `http://localhost:5000`
+---
 
 ## Testing
 
-Install backend development dependencies:
-
+Install development dependencies:
 ```bash
-python -m pip install --requirement requirements-dev.txt
+pip install -r requirements-dev.txt
 ```
 
-Run the complete local quality gate:
-
+Run test suites:
 ```bash
+# Run full test suite
 npm test
-```
 
-Run either side independently:
-
-```bash
+# Run backend tests only
 npm run test:backend
+
+# Run frontend tests only
 npm run test:frontend
 ```
 
-Backend tests use mocks and Flask test clients, so they do not require production
-credentials, a live database, or a Brevo connection. GitHub Actions runs backend tests
-and frontend lint/build checks independently for pushes to `main` and pull requests.
+See [Automated Testing & CI Documentation](docs/automated-testing-ci.md) for details.
 
-See [Automated Testing and Continuous Integration](docs/automated-testing-ci.md) for the
-workflow, test-writing expectations, failure meanings, and troubleshooting guidance.
+---
 
-##  Deployment (Railway)
+## Deployment (Railway)
 
-**1. Install Railway CLI**
-```bash
-npm install -g @railway/cli
-```
+1. **Install Railway CLI and Authenticate**
+   ```bash
+   npm install -g @railway/cli
+   railway login
+   ```
 
-**2. Login and initialize**
-```bash
-railway login
-railway init
-```
+2. **Initialize and Deploy**
+   ```bash
+   railway init
+   railway add
+   railway up
+   ```
 
-**3. Add PostgreSQL database**
-```bash
-railway add
-```
+3. **Configure Domain**
+   ```bash
+   railway domain
+   ```
 
-**4. Deploy**
-```bash
-railway up
-```
-
-**5. Generate public URL**
-```bash
-railway domain
-```
+---
 
 ## Usage
 
-### Registration
-- Username: minimum 3 characters
-- Password: 8+ characters with uppercase, number, and special character
-- Email: valid email address
+1. **Register**: Create an account with password complexity rules and complete email setup.
+2. **Set Allowance**: Enter your weekly budget allowance.
+3. **Log Expenses**: Add expenses manually or use the receipt scanner.
+4. **View Summaries**: Monitor spending bars and weekly/monthly trends.
+5. **Export PDF**: Download PDF copies of weekly or monthly statements.
 
-### Weekly Budget
-- Set your weekly allowance
-- Week runs Sunday to Saturday
-- Click "Start Tracking"
+---
 
-### Daily Expenses
-- Select a day
-- Enter Fare, Food, or Other expenses
-- Click "Add"
+## Contributing
 
-### Monthly Summary
-- Click "Monthly Summary" tab
-- Navigate between months
-- Export as PDF
+1. Fork the repository.
+2. Create a feature branch (`git checkout -b feature/name`).
+3. Commit changes (`git commit -m 'Add feature'`).
+4. Push to branch (`git push origin feature/name`).
+5. Open a Pull Request.
 
-### Theme Toggle
-- Desktop: Click sun/moon icon
-- Mobile: Hamburger menu → "Toggle Theme"
-
-### Mobile Navigation
-- Tap ☰ in top-right
-- Access Theme, Export, Logout
-- Click outside to close
-
-**Mobile menu not working**
-- Hard refresh: `Ctrl + Shift + R`
-- Clear browser cache
-
-## Open to Contributions
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b `)
-3. Commit changes (`git commit -m 'message'`)
-4. Push to branch (`git push origin `)
-5. Open Pull Request
+---
 
 ## License
 
-This project is licensed under the MIT License.
+Distributed under the MIT License. See `LICENSE` for details.
 
-
----
