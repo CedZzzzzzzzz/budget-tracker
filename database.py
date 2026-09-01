@@ -3,6 +3,7 @@ import hashlib
 import os
 import re
 import secrets
+import threading
 import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -149,7 +150,9 @@ def db_connect():
             last_error = error
             if attempt < CONNECT_RETRIES - 1:
                 time.sleep(CONNECT_RETRY_DELAY * (attempt + 1))
-    raise last_error
+    if last_error:
+        raise last_error
+    raise RuntimeError("Failed to connect to database.")
 
 
 def release_connection(conn):
@@ -207,11 +210,40 @@ def normalize_email(email):
     return f"{local}@{domain}"
 
 
+keepalive_thread = None
+
+
+def keepalive_loop(interval=240):
+    while True:
+        time.sleep(interval)
+        try:
+            with db_cursor() as cursor:
+                cursor.execute("SELECT 1")
+        except Exception:
+            pass
+
+
+def start_keepalive_daemon(interval=240):
+    global keepalive_thread
+    enabled = os.environ.get("ENABLE_DB_KEEPALIVE", "false").strip().lower() in ("1", "true", "yes", "on")
+    if not enabled:
+        return
+    if keepalive_thread is None or not keepalive_thread.is_alive():
+        keepalive_thread = threading.Thread(
+            target=keepalive_loop,
+            args=(interval,),
+            daemon=True,
+            name="neon-db-keepalive",
+        )
+        keepalive_thread.start()
+
+
 def init_db():
     from migrations.runner import run_migrations
 
     run_migrations()
     warmup_pool()
+    start_keepalive_daemon()
 
 
 def warmup_pool():

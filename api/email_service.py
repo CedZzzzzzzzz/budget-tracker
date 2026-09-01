@@ -382,3 +382,47 @@ def send_email_verification_background(to_email, verification_url, on_complete=N
         "email-verification",
         on_complete,
     )
+
+
+def send_saturday_reminder_email(to_email, app_url):
+    subject = "Saturday Check-in: Did you forget to log any expenses this week?"
+    text_body = (
+        "Saturday Check-in — Budget Tracker\n\n"
+        "Your weekly budget resets tomorrow (Sunday).\n"
+        f"Log any remaining or past expenses now:\n{app_url}\n\n"
+        "Stay on top of your financial goals!\n"
+    )
+    html_body = build_action_email(
+        preheader="Log your expenses before your budget resets on Sunday.",
+        eyebrow="Saturday Check-in",
+        title="Did you forget to log any expenses this week?",
+        message="Your weekly budget cycle resets tomorrow on Sunday. Takes less than a minute to record missing expenses for this week or last week.",
+        action_label="Log past expenses",
+        action_url=app_url,
+        expiry_message="Log in to your Budget Tracker dashboard anytime to update your transactions.",
+        ignore_message="You are receiving this optional Saturday reminder because you have active account notifications enabled.",
+    )
+
+    if not mail_configured():
+        if os.environ.get("FLASK_ENV", "development") != "production":
+            logger.warning("Saturday reminder email for local development sent to %s:\n  %s", to_email, app_url)
+            return True
+        logger.error("Saturday reminder email could not be sent because email is not configured")
+        return False
+
+    transport = preferred_email_transport()
+    if transport == "api" and brevo_api_key():
+        return send_via_brevo_api(to_email, subject, text_body, html_body)
+    if transport == "smtp":
+        return send_via_smtp(to_email, subject, text_body, html_body)
+    return False
+
+
+def send_saturday_reminder_email_background(to_email, app_url, on_complete=None):
+    return send_email_background(
+        send_saturday_reminder_email,
+        (to_email, app_url),
+        "saturday-reminder-email",
+        on_complete,
+    )
+

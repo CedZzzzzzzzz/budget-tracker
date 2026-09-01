@@ -19,6 +19,7 @@ from api.email_service import (
     send_email_verification_background,
     send_password_reset_email,
     send_password_reset_email_background,
+    send_saturday_reminder_email_background,
 )
 from api.errors import handle_api_errors, internal_error
 from api.insights import build_insights, generate_budget_insights
@@ -2646,4 +2647,15 @@ def export_range_pdf():
     )
     return pdf_response(buffer, f"budget-{start_date}_to_{end_inclusive}.pdf")
 
+@api.route("/user/send-saturday-reminder", methods=["POST"])
+@login_required
+@handle_api_errors
+def trigger_saturday_reminder():
+    user_id = get_user_id()
+    user = db.get_user_by_id(user_id)
+    if not user or not user.get("email"):
+        return jsonify({"error": "No verified email associated with this account"}), 400
 
+    app_url = f"{app_base_url()}/dashboard"
+    send_saturday_reminder_email_background(user["email"], app_url)
+    return jsonify({"message": f"Saturday expense reminder email sent to {user['email']}"}), 200

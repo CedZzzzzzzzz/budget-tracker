@@ -9,6 +9,7 @@ import CategoryBadge from '../components/CategoryBadge';
 import { useCategories } from '../components/CategoriesContext';
 import ShortcutsHelp, { isEditableTarget } from '../components/ShortcutsHelp';
 import ReceiptScanner from '../components/ReceiptScanner';
+import PastExpenseModal from '../components/PastExpenseModal';
 import {
   categorizeItem,
   categoryLabel,
@@ -69,6 +70,14 @@ const EditIcon = () => (
   <svg {...svgProps} className="h-4 w-4">
     <path d="M12 20h9" />
     <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+  </svg>
+);
+const CalendarIcon = () => (
+  <svg {...svgProps} className="h-3.5 w-3.5">
+    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+    <line x1="16" y1="2" x2="16" y2="6" />
+    <line x1="8" y1="2" x2="8" y2="6" />
+    <line x1="3" y1="10" x2="21" y2="10" />
   </svg>
 );
 
@@ -734,6 +743,8 @@ function WeeklyTracker({
   const [modalDay, setModalDay] = useState(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
+  const [pastModalOpen, setPastModalOpen] = useState(false);
+  const isSaturday = today === 6;
   const logExpenseRef = useRef(null);
   const itemNameRef = useRef(null);
   const itemAmountRef = useRef(null);
@@ -1103,6 +1114,34 @@ function WeeklyTracker({
         </div>
       )}
 
+      <PastExpenseModal
+        isOpen={pastModalOpen}
+        onClose={() => setPastModalOpen(false)}
+        onExpenseAdded={() => window.location.reload()}
+        categories={categories.map((c) => ({ id: c, name: categoryLabel(c, labels) }))}
+      />
+
+      {isSaturday && (
+        <div className="mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-2xl border border-purple-primary/30 bg-purple-primary/10 p-4 backdrop-blur-md">
+          <div className="flex items-center gap-3">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-primary/20 text-purple-primary-light">
+              <CalendarIcon />
+            </span>
+            <div>
+              <p className="text-sm font-semibold text-purple-text">Saturday Check-in</p>
+              <p className="text-xs text-purple-soft">Your weekly budget resets tomorrow (Sunday). Did you forget to log any expenses this week or last week?</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPastModalOpen(true)}
+            className="inline-flex items-center gap-2 rounded-xl bg-purple-primary px-4 py-2 text-xs font-semibold text-white shadow-glow hover:bg-purple-primary-light transition whitespace-nowrap"
+          >
+            <CalendarIcon /> Log Past Expense
+          </button>
+        </div>
+      )}
+
       {allowance > 0 && comparison && (
         <WeekComparisonCard data={comparison} />
       )}
@@ -1152,16 +1191,26 @@ function WeeklyTracker({
           <SectionTitle
             className="mb-4"
             right={(
-              <button
-                type="button"
-                onClick={() => setShortcutsOpen(true)}
-                className="glass-btn-ghost inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-medium text-purple-muted hover:text-purple-text"
-                title="Keyboard shortcuts (?)"
-                aria-label="Keyboard shortcuts"
-              >
-                <kbd className="rounded border border-purple-primary/25 bg-purple-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-purple-primary-light">?</kbd>
-                Shortcuts
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPastModalOpen(true)}
+                  className="glass-btn-ghost inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-medium text-purple-primary-light hover:text-white"
+                  title="Log expense for last week or past date"
+                >
+                  <CalendarIcon /> Log Past Expense
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShortcutsOpen(true)}
+                  className="glass-btn-ghost inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-medium text-purple-muted hover:text-purple-text"
+                  title="Keyboard shortcuts (?)"
+                  aria-label="Keyboard shortcuts"
+                >
+                  <kbd className="rounded border border-purple-primary/25 bg-purple-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-purple-primary-light">?</kbd>
+                  Shortcuts
+                </button>
+              </div>
             )}
           >
             Log expense
