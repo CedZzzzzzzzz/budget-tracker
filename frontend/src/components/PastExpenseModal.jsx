@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { apiFetch } from '../api';
+import { apiFetch, parseApiResponse } from '../api';
 import { input, label, btnPrimary, btnGhost, heading, subtext } from '../utils/theme';
 
 export default function PastExpenseModal({ isOpen, onClose, onExpenseAdded, categories = [] }) {
@@ -35,8 +35,11 @@ export default function PastExpenseModal({ isOpen, onClose, onExpenseAdded, cate
         method: 'POST',
         body: formData,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not scan receipt');
+      const { data, ok } = await parseApiResponse(res);
+      if (!ok) {
+        setError(data.error || 'Could not scan receipt');
+        return;
+      }
 
       const r = data.receipt || {};
       if (r.transaction_date && r.transaction_date <= getTodayStr()) {
@@ -51,8 +54,8 @@ export default function PastExpenseModal({ isOpen, onClose, onExpenseAdded, cate
       if (data.items?.[0]?.category) {
         setCategory(data.items[0].category);
       }
-    } catch (err) {
-      setError(err.message || 'Failed to extract receipt data.');
+    } catch {
+      setError('Failed to extract receipt data.');
     } finally {
       setScanning(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -79,7 +82,7 @@ export default function PastExpenseModal({ isOpen, onClose, onExpenseAdded, cate
 
     setSaving(true);
     try {
-      const res = await apiFetch('/api/items', {
+      const res = await apiFetch('/api/add-expense-item', {
         method: 'POST',
         body: JSON.stringify({
           item_date: itemDate,
@@ -90,9 +93,10 @@ export default function PastExpenseModal({ isOpen, onClose, onExpenseAdded, cate
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to log past expense');
+      const { data, ok } = await parseApiResponse(res);
+      if (!ok) {
+        setError(data.error || 'Failed to log past expense');
+        return;
       }
 
       onExpenseAdded?.(data);
@@ -100,8 +104,8 @@ export default function PastExpenseModal({ isOpen, onClose, onExpenseAdded, cate
       setName('');
       setCost('');
       setNotes('');
-    } catch (err) {
-      setError(err.message || 'An error occurred while saving.');
+    } catch {
+      setError('An error occurred while saving past expense.');
     } finally {
       setSaving(false);
     }
@@ -198,7 +202,7 @@ export default function PastExpenseModal({ isOpen, onClose, onExpenseAdded, cate
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={label}>Amount ($)</label>
+              <label className={label}>Amount</label>
               <input
                 type="number"
                 step="0.01"
