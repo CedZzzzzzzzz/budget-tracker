@@ -1649,15 +1649,25 @@ def add_expense_items_batch_route():
 @login_required
 @handle_api_errors
 def add_expense_item_route():
-    data = request.get_json()
+    data = request.get_json() or {}
     user_id = get_user_id()
     week_start, week_end = get_week_range()
-
     day = data.get("day")
+
+    raw_date = data.get("item_date") or data.get("date")
+    if raw_date:
+        try:
+            expense_date = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d").date()
+            week_start = expense_date - timedelta(days=(expense_date.weekday() + 1) % 7)
+            week_end = week_start + timedelta(days=6)
+            day = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][expense_date.weekday()]
+        except ValueError:
+            pass
+
     name = (data.get("name") or "").strip()
-    amount = float(data.get("amount", 0))
+    amount = float(data.get("amount") if data.get("amount") is not None else data.get("cost") or 0)
     category = (data.get("category") or "").strip().lower()
-    notes, tags, meta_error = parse_item_notes_tags(data or {})
+    notes, tags, meta_error = parse_item_notes_tags(data)
     if meta_error:
         return jsonify({"error": meta_error}), 400
 
@@ -1675,10 +1685,13 @@ def add_expense_item_route():
     expense_date = week_start + timedelta(days=DAYS_MAP.get(day, 0))
     budget = db.get_budget_by_week(user_id, week_start, week_end)
     if not budget:
-        return jsonify({"error": "Please set allowance first."}), 404
+        allowance = db.income_sources_total(sources=db.get_user_income_sources(user_id), active_only=True)
+        budget_id = db.create_budget(user_id, week_start, week_end, max(0.0, allowance))
+    else:
+        budget_id = budget["id"]
 
     item, day, day_expense, budget_totals = db.add_expense_item(
-        budget["id"], day, expense_date, name, amount, category, notes=notes, tags=tags,
+        budget_id, day, expense_date, name, amount, category, notes=notes, tags=tags,
     )
     db.learn_category_correction(user_id, name, category)
     return jsonify({
