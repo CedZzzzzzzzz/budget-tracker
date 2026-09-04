@@ -3,14 +3,30 @@ import { createPortal } from 'react-dom';
 import { apiFetch, parseApiResponse } from '../api';
 import { input, label, btnPrimary, btnGhost, heading, subtext } from '../utils/theme';
 
-export default function PastExpenseModal({ isOpen, onClose, onExpenseAdded, categories = [] }) {
-  const getTodayStr = () => new Date().toISOString().split('T')[0];
-  const getPastSevenDaysStr = () => {
-    const d = new Date();
-    d.setDate(d.getDate() - 7);
-    return d.toISOString().split('T')[0];
-  };
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+const formatDateLocal = (dateObj = new Date()) => {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const getTodayStr = () => formatDateLocal(new Date());
+
+const getPastSevenDaysStr = () => {
+  const d = new Date();
+  d.setDate(d.getDate() - 7);
+  return formatDateLocal(d);
+};
+
+const getDayNameFromDateStr = (dateStr) => {
+  if (!dateStr) return null;
+  const parsed = new Date(`${dateStr}T12:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : DAY_NAMES[parsed.getDay()];
+};
+
+export default function PastExpenseModal({ isOpen, onClose, onExpenseAdded, categories = [] }) {
   const fileInputRef = useRef(null);
   const [itemDate, setItemDate] = useState(getPastSevenDaysStr());
   const [name, setName] = useState('');
@@ -42,8 +58,15 @@ export default function PastExpenseModal({ isOpen, onClose, onExpenseAdded, cate
       }
 
       const r = data.receipt || {};
-      if (r.transaction_date && r.transaction_date <= getTodayStr()) {
-        setItemDate(r.transaction_date);
+      const rawDate = r.transaction_date || r.purchase_date;
+      if (rawDate) {
+        const parsed = new Date(rawDate.includes('T') ? rawDate : `${rawDate}T12:00:00`);
+        if (!Number.isNaN(parsed.getTime())) {
+          const formatted = formatDateLocal(parsed);
+          if (formatted <= getTodayStr()) {
+            setItemDate(formatted);
+          }
+        }
       }
       if (r.merchant || data.items?.[0]?.name) {
         setName(r.merchant || data.items[0].name);
@@ -80,14 +103,18 @@ export default function PastExpenseModal({ isOpen, onClose, onExpenseAdded, cate
       return;
     }
 
+    const derivedDay = getDayNameFromDateStr(itemDate);
+
     setSaving(true);
     try {
       const res = await apiFetch('/api/add-expense-item', {
         method: 'POST',
         body: JSON.stringify({
+          day: derivedDay,
           item_date: itemDate,
           name: name.trim(),
           cost: parsedCost,
+          amount: parsedCost,
           category: category,
           notes: notes.trim(),
         }),
